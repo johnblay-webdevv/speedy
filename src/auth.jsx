@@ -219,6 +219,49 @@ export function AuthScreen() {
           </button>
         </p>
       )}
+      {mode === "login" && !recovery && <InstallButton />}
+    </div>
+  );
+}
+
+function InstallButton() {
+  const [promptEvent, setPromptEvent] = useState(null);
+  const [help, setHelp] = useState("");
+  const installed =
+    window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+
+  useEffect(() => {
+    const onPrompt = (event) => {
+      event.preventDefault();
+      setPromptEvent(event);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+  }, []);
+
+  if (installed) return null;
+
+  const install = async () => {
+    if (promptEvent) {
+      await promptEvent.prompt();
+      await promptEvent.userChoice;
+      setPromptEvent(null);
+      return;
+    }
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    setHelp(
+      ios
+        ? "Tap Share, then Add to Home Screen."
+        : "Open the browser menu, then tap Install app or Add to Home screen.",
+    );
+  };
+
+  return (
+    <div className="install-block">
+      <button type="button" className="btn ghost block" onClick={install}>
+        Add to Home Screen
+      </button>
+      {help && <p className="note">{help}</p>}
     </div>
   );
 }

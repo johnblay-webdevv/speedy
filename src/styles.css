@@ -1233,6 +1233,8 @@ input::placeholder { color: #8d8d96; }
 .auth-form textarea { min-height: 72px; resize: none; }
 .auth-error { color: #ff8aa3; font-size: 13px; margin: 0; }
 .auth-switch { color: var(--dim); font-size: 13px; text-align: center; margin: 0; }
+.install-block { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.install-block .note { text-align: center; }
 .auth-switch button { color: #fff; font-weight: 750; }
 .env-sample {
   margin: 0;
