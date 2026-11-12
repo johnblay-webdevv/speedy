@@ -1,38 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CLIPS, CREATORS, creatorMap, isLive, productMap } from "./data";
 import { coinLabel, compact, cx, money, uid } from "./format";
 import { CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
 import { Avatar, FollowButton } from "./ui";
 
 export function Feed() {
-  const { state, go, openSheet, toggleLike } = useStore();
+  const { state, go, openSheet, toggleLike, isLive } = useStore();
   const [feedTab, setFeedTab] = useState("foryou");
-  const [copies, setCopies] = useState(1);
   const [active, setActive] = useState(null);
   const [paused, setPaused] = useState(false);
   const [pop, setPop] = useState(false);
   const scrollerRef = useRef(null);
-  const sentinelRef = useRef(null);
   const prevCoins = useRef(state.coins);
 
   const catalog = useMemo(() => {
-    if (feedTab === "following") return CLIPS.filter((clip) => state.following[clip.creatorId]);
-    return CLIPS;
-  }, [feedTab, state.following]);
+    if (feedTab === "following") return state.clips.filter((clip) => state.following[clip.creatorId]);
+    return state.clips;
+  }, [feedTab, state.clips, state.following]);
 
   const catalogKey = catalog.map((clip) => clip.id).join("|");
-
-  const items = useMemo(() => {
-    const list = [];
-    for (let copy = 0; copy < copies; copy += 1) {
-      catalog.forEach((clip) => list.push({ ...clip, key: `${clip.id}-${copy}` }));
-    }
-    return list;
-  }, [catalog, copies]);
+  const items = catalog;
 
   useEffect(() => {
-    setCopies(1);
     setPaused(false);
     scrollerRef.current?.scrollTo({ top: 0 });
   }, [feedTab, catalogKey]);
@@ -50,22 +39,6 @@ export function Feed() {
   useEffect(() => {
     setPaused(false);
   }, [active]);
-
-  useEffect(() => {
-    const root = scrollerRef.current;
-    const node = sentinelRef.current;
-    if (!root || !node) return undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          setCopies((count) => Math.min(count + 1, 6));
-        }
-      },
-      { root, rootMargin: "480px" },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [items.length, feedTab]);
 
   useEffect(() => {
     const root = scrollerRef.current;
@@ -103,65 +76,52 @@ export function Feed() {
     return () => window.removeEventListener("keydown", onKey);
   }, [state.view, state.sheet, state.orderFlash]);
 
-  const suggestions = CREATORS.filter((creator) => !state.following[creator.id]).slice(0, 6);
+  const suggestions = state.people.filter((creator) => creator.id !== state.profile?.id && !state.following[creator.id]).slice(0, 6);
 
   return (
     <section className={state.view === "feed" ? "feed" : "feed is-hidden"} aria-label="Speedy feed">
       <div className="feed-scroller" ref={scrollerRef}>
         {items.length === 0 && (
           <div className="empty">
-            <h2>Your Following feed is quiet</h2>
-            <p>Follow a few hosts and their clips collect here.</p>
-            <div className="suggest">
-              {suggestions.map((creator) => (
-                <div className="person" key={creator.id}>
-                  <button type="button" onClick={() => openSheet({ type: "creator", creatorId: creator.id })} aria-label={creator.name}>
-                    <Avatar src={creator.avatar} name={creator.name} size={44} ring={isLive(creator.id)} />
-                  </button>
-                  <button type="button" className="person-copy" onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
-                    <b>
-                      {creator.name}
-                      {creator.verified && (
-                        <span className="verified">
-                          <Icon name="verified" size={13} />
-                        </span>
-                      )}
-                    </b>
-                    <span className="note">@{creator.handle}</span>
-                  </button>
-                  <FollowButton id={creator.id} />
-                </div>
-              ))}
-            </div>
+            <h2>{feedTab === "following" ? "Nothing from people you follow" : "No posts yet"}</h2>
+            <p>{feedTab === "following" ? "Follow someone, or post a clip of your own." : "Post a clip when you have something to show."}</p>
+            <button type="button" className="btn" onClick={() => openSheet({ type: "post" })}>
+              Post a clip
+            </button>
+            {feedTab === "following" && suggestions.length > 0 && (
+              <div className="suggest">
+                {suggestions.map((creator) => (
+                  <div className="person" key={creator.id}>
+                    <button type="button" onClick={() => openSheet({ type: "creator", creatorId: creator.id })} aria-label={creator.name}>
+                      <Avatar src={creator.avatar} name={creator.name} size={44} ring={isLive(creator.id)} />
+                    </button>
+                    <button type="button" className="person-copy" onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
+                      <b>{creator.name}</b>
+                      <span className="note">@{creator.handle}</span>
+                    </button>
+                    <FollowButton id={creator.id} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {items.map((clip) => (
           <ClipCard
-            key={clip.key}
+            key={clip.id}
             clip={clip}
-            active={active === clip.key}
-            paused={paused && active === clip.key}
+            active={active === clip.id}
+            paused={paused && active === clip.id}
             onTogglePause={() => setPaused((value) => !value)}
             onLike={() => {
               if (!state.liked[clip.id]) toggleLike(clip.id);
             }}
           />
         ))}
-        {items.length > 0 && copies < 6 && <div className="sentinel" ref={sentinelRef} />}
-        {items.length > 0 && copies >= 6 && (
+        {items.length > 0 && (
           <section className="clip endcap">
-            <h2>You caught the loop</h2>
-            <p>Speedy keeps moving. Start again from the top.</p>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                setCopies(1);
-                scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-            >
-              Back to top
-            </button>
+            <h2>That's everything</h2>
+            <p>New posts show up here.</p>
           </section>
         )}
       </div>
@@ -192,15 +152,14 @@ export function Feed() {
 }
 
 function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
-  const { state, openSheet, toggleFollow, toggleLike, toggleSave } = useStore();
-  const creator = creatorMap[clip.creatorId];
-  const product = productMap[clip.productId];
+  const { state, openSheet, toggleFollow, toggleLike, toggleSave, person, product, isLive } = useStore();
+  const creator = person(clip.creatorId);
+  const linked = clip.productId ? product(clip.productId) : null;
   const [hearts, setHearts] = useState([]);
   const [run, setRun] = useState(0);
   const tap = useRef({ time: 0, timer: 0, x: 0, y: 0 });
   const liked = !!state.liked[clip.id];
   const saved = !!state.savedClips[clip.id];
-  const extras = state.comments[clip.id]?.length ?? 0;
 
   useEffect(() => {
     if (active) setRun((value) => value + 1);
@@ -239,15 +198,17 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
     }, 280);
   };
 
+  if (!creator) return null;
+
   return (
     <article
       className={cx("clip", paused && "paused")}
-      data-clip={clip.key}
+      data-clip={clip.id}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
     >
       <div className="clip-bg" style={{ background: clip.gradient, "--glow": clip.tint }}>
-        <div className="clip-word">{clip.word}</div>
+        {clip.word && <div className="clip-word">{clip.word}</div>}
         <img
           src={clip.image}
           alt=""
@@ -280,7 +241,7 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
           <button type="button" aria-label={creator.name} onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
             <Avatar src={creator.avatar} name={creator.name} size={46} ring={isLive(creator.id)} />
           </button>
-          {!state.following[creator.id] && (
+          {creator.id !== state.profile?.id && !state.following[creator.id] && (
             <button type="button" className="avatar-plus" aria-label={`Follow ${creator.name}`} onClick={() => toggleFollow(creator.id)}>
               <Icon name="plus" size={12} />
             </button>
@@ -288,33 +249,32 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
         </div>
         <button type="button" className={liked ? "liked" : ""} aria-label={liked ? "Unlike" : "Like"} onClick={() => toggleLike(clip.id)}>
           <Icon name="heart" size={30} filled={liked} />
-          <span className="count num">{compact(clip.likes + (liked ? 1 : 0))}</span>
+          <span className="count num">{compact(clip.likes)}</span>
         </button>
         <button type="button" aria-label="Comments" onClick={() => openSheet({ type: "comments", clipId: clip.id })}>
           <Icon name="comment" size={28} />
-          <span className="count num">{compact(clip.comments + extras)}</span>
+          <span className="count num">{compact(clip.comments)}</span>
         </button>
         <button type="button" className={saved ? "saved" : ""} aria-label={saved ? "Unsave" : "Save"} onClick={() => toggleSave(clip.id)}>
           <Icon name="bookmark" size={28} filled={saved} />
-          <span className="count num">{compact(clip.saves + (saved ? 1 : 0))}</span>
+          <span className="count num">{compact(clip.saves)}</span>
         </button>
         <button type="button" aria-label="Share" onClick={() => openSheet({ type: "share", clipId: clip.id })}>
           <Icon name="share" size={28} />
-          <span className="count num">{compact(clip.shares)}</span>
         </button>
-        <img className="disc" src={creator.avatar} alt="" referrerPolicy="no-referrer" />
+        {creator.avatar && <img className="disc" src={creator.avatar} alt="" referrerPolicy="no-referrer" />}
       </div>
 
       <div className="clip-meta">
-        {product && (
-          <button type="button" className="pill" onClick={() => openSheet({ type: "quick", productId: product.id })}>
-            <img src={product.image} alt="" referrerPolicy="no-referrer" />
+        {linked && (
+          <button type="button" className="pill" onClick={() => openSheet({ type: "quick", productId: linked.id })}>
+            <img src={linked.image} alt="" referrerPolicy="no-referrer" />
             <span className="grow">
-              <span className="name">{product.name}</span>
+              <span className="name">{linked.name}</span>
               <span className="price-row">
-                <b>{money(product.price)}</b>
-                {product.was && <s className="was">{money(product.was)}</s>}
-                <span className="note"> · {compact(product.sold)} sold</span>
+                <b>{money(linked.price)}</b>
+                {linked.was ? <s className="was">{money(linked.was)}</s> : null}
+                <span className="note"> · {compact(linked.sold)} sold</span>
               </span>
             </span>
             <span className="shop-chip">Shop</span>
@@ -322,24 +282,14 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
         )}
         <button type="button" className="handle" onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
           @{creator.handle}
-          {creator.verified && (
-            <span className="verified">
-              <Icon name="verified" size={14} />
-            </span>
-          )}
         </button>
-        <p className="caption">
-          {clip.caption}{" "}
-          {clip.tags.map((tag) => (
-            <span key={tag} className="hash">
-              #{tag}{" "}
-            </span>
-          ))}
-        </p>
-        <div className="sound">
-          <Icon name="music" size={14} />
-          <span>{clip.audio}</span>
-        </div>
+        <p className="caption">{clip.caption}</p>
+        {clip.audio && (
+          <div className="sound">
+            <Icon name="music" size={14} />
+            <span>{clip.audio}</span>
+          </div>
+        )}
       </div>
 
       <div className="scrub" aria-hidden="true">

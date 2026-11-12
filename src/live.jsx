@@ -1,22 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  BUYERS,
-  COMMENT_LINES,
-  GIFTS,
-  LIVES,
-  PRODUCTS,
-  creatorMap,
-  liveMap,
-  productMap,
-} from "./data";
+import { useEffect, useMemo, useState } from "react";
+import { joinLive, leaveLive, loadMessages, sendMessage, uploadMedia, viewerCount } from "./account";
 import { coinLabel, compact, cx, money, uid } from "./format";
 import { BoltMark, CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
 import { Avatar, BagButton, Header, StockBar } from "./ui";
 
 export function LiveLobby() {
-  const { go, openSheet } = useStore();
-  const [featured, ...rest] = LIVES;
+  const { state, go, person } = useStore();
+  const [featured, ...rest] = state.lives;
   return (
     <section className="page">
       <header className="subhead">
@@ -26,115 +17,115 @@ export function LiveLobby() {
         <h1>Live</h1>
         <span className="icon-btn" aria-hidden="true" />
       </header>
-      <button type="button" className="hero-live" onClick={() => go("room", featured.id)}>
-        <img src={featured.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: featured.focus }} />
-        <span className="shade" />
-        <span className="view-chip">
-          <i className="dot ping" /> LIVE · {compact(featured.viewers)}
-        </span>
-        <span className="live-copy">
-          <strong>{featured.title}</strong>
-          <span>
-            {creatorMap[featured.creatorId].name} · {compact(featured.sold)} sold
+      {!featured && (
+        <div className="empty">
+          <h2>Nobody is live</h2>
+          <p>Start one when you have a product to sell.</p>
+          <button type="button" className="btn" onClick={() => go("broadcast")}>
+            Go live
+          </button>
+        </div>
+      )}
+      {featured && (
+        <button type="button" className="hero-live" onClick={() => go("room", featured.id)}>
+          <img src={featured.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: featured.focus }} />
+          <span className="shade" />
+          <span className="view-chip">
+            <i className="dot ping" /> LIVE · {compact(featured.viewers)}
           </span>
-        </span>
-      </button>
-      <div className="section">
-        <h2>Happening now</h2>
-      </div>
-      <div className="live-grid">
-        {rest.map((live) => {
-          const host = creatorMap[live.creatorId];
-          return (
-            <button type="button" className="live-card" key={live.id} onClick={() => go("room", live.id)}>
-              <img src={live.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: live.focus }} />
-              <span className="shade" />
-              <span className="view-chip">
-                <i className="dot" /> {compact(live.viewers)}
-              </span>
-              <span className="live-copy">
-                <strong>{host.name}</strong>
-                <span>{live.title}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-      <button type="button" className="text-link" onClick={() => openSheet({ type: "bolt" })}>
-        Start your own live
-      </button>
+          <span className="live-copy">
+            <strong>{featured.title}</strong>
+            <span>
+              {person(featured.creatorId)?.name} · {compact(featured.sold)} sold
+            </span>
+          </span>
+        </button>
+      )}
+      {rest.length > 0 && (
+        <>
+          <div className="section">
+            <h2>Happening now</h2>
+          </div>
+          <div className="live-grid">
+            {rest.map((live) => {
+              const host = person(live.creatorId);
+              return (
+                <button type="button" className="live-card" key={live.id} onClick={() => go("room", live.id)}>
+                  <img src={live.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: live.focus }} />
+                  <span className="shade" />
+                  <span className="view-chip">
+                    <i className="dot" /> {compact(live.viewers)}
+                  </span>
+                  <span className="live-copy">
+                    <strong>{host?.name}</strong>
+                    <span>{live.title}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {featured && (
+        <button type="button" className="text-link" onClick={() => go("broadcast")}>
+          Start your own live
+        </button>
+      )}
     </section>
   );
 }
 
 export function LiveRoom() {
-  const { state, go, back, openSheet, addToCart, bumpPressure, earn, toggleFollow } = useStore();
-  const live = liveMap[state.param];
-  const host = live ? creatorMap[live.creatorId] : null;
-  const products = useMemo(
-    () => (live ? live.productIds.map((id) => productMap[id]).filter(Boolean) : []),
-    [live],
-  );
+  const { state, go, back, openSheet, addToCart, earn, toggleFollow, person, product, live, stopLive, setViewers } = useStore();
+  const room = live(state.param);
+  const host = room ? person(room.creatorId) : null;
+  const products = useMemo(() => (room ? room.productIds.map((id) => product(id)).filter(Boolean) : []), [room, product]);
   const [index, setIndex] = useState(0);
-  const [viewers, setViewers] = useState(live?.viewers ?? 0);
-  const [sold, setSold] = useState(live?.sold ?? 0);
-  const [thread, setThread] = useState(() => seedThread(products));
+  const [thread, setThread] = useState([]);
   const [draft, setDraft] = useState("");
   const [banner, setBanner] = useState(null);
   const [floats, setFloats] = useState([]);
-  const earnRef = useRef(earn);
-  const bumpRef = useRef(bumpPressure);
-  earnRef.current = earn;
-  bumpRef.current = bumpPressure;
+  const mine = host && state.profile?.id === host.id;
 
   useEffect(() => {
-    if (state.earned.watch) return undefined;
-    const timer = setTimeout(() => earnRef.current("watch", 10, "Watched a live"), 6000);
+    if (!room) return undefined;
+    let stop = false;
+    joinLive(room.id).catch(() => {});
+    const pull = () => {
+      viewerCount(room.id)
+        .then((count) => {
+          if (!stop) setViewers(room.id, count);
+        })
+        .catch(() => {});
+      loadMessages(room.id)
+        .then((messages) => {
+          if (!stop) setThread(messages.slice(-7));
+        })
+        .catch(() => {});
+    };
+    pull();
+    const timer = setInterval(pull, 4000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+      leaveLive(room.id).catch(() => {});
+    };
+  }, [room?.id]);
+
+  useEffect(() => {
+    if (!room || state.earned.watch) return undefined;
+    const timer = setTimeout(() => earn("watch", 10, "Watched a live"), 6000);
     return () => clearTimeout(timer);
-  }, [state.earned.watch]);
+  }, [room?.id, state.earned.watch]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setViewers((value) => Math.max(80, value + Math.round(Math.random() * 50 - 20)));
-    }, 2000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(() => setIndex((value) => (value + 1) % Math.max(products.length, 1)), 7000);
-    return () => clearInterval(timer);
-  }, [products.length]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const product = products[Math.floor(Math.random() * products.length)];
-      if (!product) return;
-      const kindRoll = Math.random();
-      if (kindRoll < 0.22) {
-        setSold((value) => value + 1);
-        bumpRef.current(product.id, 1);
-        setThread((list) =>
-          [...list, { id: uid("m"), kind: "buy", user: pick(BUYERS), text: `grabbed ${product.name}` }].slice(-7),
-        );
-      } else if (kindRoll < 0.34) {
-        setThread((list) => [...list, { id: uid("m"), kind: "join", user: pick(BUYERS), text: "joined" }].slice(-7));
-      } else {
-        setThread((list) =>
-          [...list, { id: uid("m"), kind: "chat", user: pick(BUYERS), text: pick(COMMENT_LINES) }].slice(-7),
-        );
-      }
-    }, 1700);
-    return () => clearInterval(timer);
-  }, [products]);
-
-  useEffect(() => {
-    if (!state.lastGift || state.lastGift.creatorId !== live?.creatorId) return undefined;
-    setBanner({ ...state.lastGift, from: "You" });
+    if (!state.lastGift || state.lastGift.creatorId !== room?.creatorId) return undefined;
+    setBanner({ ...state.lastGift, from: state.profile?.name || "You" });
     const timer = setTimeout(() => setBanner(null), 1700);
     return () => clearTimeout(timer);
-  }, [state.lastGift, live?.creatorId]);
+  }, [state.lastGift, room?.creatorId, state.profile?.name]);
 
-  if (!live || !host) {
+  if (!room || !host) {
     return (
       <section className="page sub">
         <Header title="Live" fallback="live" />
@@ -148,8 +139,8 @@ export function LiveRoom() {
     );
   }
 
-  const product = products[index] ?? products[0];
-  const left = product ? unitsLeft(product, state) : 0;
+  const pinned = products[index] ?? products[0];
+  const left = pinned ? unitsLeft(pinned, state) : 0;
 
   const float = (event) => {
     if (event.target.closest("button, input, a, form")) return;
@@ -159,27 +150,36 @@ export function LiveRoom() {
     setTimeout(() => setFloats((list) => list.filter((item) => item.id !== id)), 900);
   };
 
-  const send = (event) => {
+  const send = async (event) => {
     event.preventDefault();
     const text = draft.trim();
     if (!text) return;
-    setThread((list) => [...list, { id: uid("m"), kind: "chat", user: "You", text }].slice(-7));
     setDraft("");
+    setThread((list) => [...list, { id: uid("m"), kind: "chat", user: state.profile?.name || "You", text }].slice(-7));
+    try {
+      await sendMessage(room.id, text);
+    } catch (error) {
+      setThread((list) => list.slice(0, -1));
+    }
   };
 
   const grab = () => {
-    if (!product || left <= 0) return;
-    if (product.sizes?.length) {
-      openSheet({ type: "quick", productId: product.id });
+    if (!pinned || left <= 0) return;
+    if (pinned.sizes?.length) {
+      openSheet({ type: "quick", productId: pinned.id, liveId: room.id });
       return;
     }
-    addToCart(product.id, null, 1);
-    setSold((value) => value + 1);
+    addToCart(pinned.id, null, 1);
+  };
+
+  const end = async () => {
+    await stopLive(room.id);
+    go("live");
   };
 
   return (
     <section className="stack room" onClick={float}>
-      <img className="room-photo" src={live.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: live.focus }} />
+      <img className="room-photo" src={room.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: room.focus }} />
       <div className="clip-shade" />
       {floats.map((item) => (
         <span key={item.id} className="float-heart" style={{ left: item.x, top: item.y }}>
@@ -194,24 +194,30 @@ export function LiveRoom() {
             <span className="live-badge">LIVE</span>
           </span>
         </button>
-        {!state.following[host.id] && (
+        {!mine && !state.following[host.id] && (
           <button type="button" className="follow tiny" onClick={() => toggleFollow(host.id)}>
             Follow
           </button>
         )}
         <span className="view-chip room-view">
-          <Icon name="eye" size={14} /> {compact(viewers)}
+          <Icon name="eye" size={14} /> {compact(room.viewers)}
         </span>
         <button type="button" className="coin-pill" onClick={() => go("wallet")}>
           <CoinMark size={14} />
           <span className="num">{coinLabel(state.coins)}</span>
         </button>
-        <button type="button" className="icon-btn" aria-label="Close live" onClick={() => back("live")}>
-          <Icon name="close" size={22} />
-        </button>
+        {mine ? (
+          <button type="button" className="btn end" onClick={end}>
+            End
+          </button>
+        ) : (
+          <button type="button" className="icon-btn" aria-label="Close live" onClick={() => back("live")}>
+            <Icon name="close" size={22} />
+          </button>
+        )}
       </header>
 
-      <div className="sold-pill">{compact(sold)} sold this live</div>
+      <div className="sold-pill">{compact(room.sold)} sold this live</div>
 
       <div className="room-comments" aria-live="polite">
         {thread.map((item) => (
@@ -226,23 +232,23 @@ export function LiveRoom() {
         <div className="gift-banner" key={banner.nonce}>
           <BoltMark size={54} />
           <div>
-            <b>{banner.from === "You" ? "You" : banner.from} sent {banner.name}</b>
+            <b>{banner.from} sent {banner.name}</b>
             <span>{banner.coins} coins</span>
           </div>
         </div>
       )}
 
-      {product && (
+      {pinned && (
         <div className="pin">
-          <button type="button" className="pin-main" onClick={() => openSheet({ type: "quick", productId: product.id })}>
-            <img src={product.image} alt="" referrerPolicy="no-referrer" />
+          <button type="button" className="pin-main" onClick={() => openSheet({ type: "quick", productId: pinned.id, liveId: room.id })}>
+            <img src={pinned.image} alt="" referrerPolicy="no-referrer" />
             <span className="grow">
-              <span className="name">{product.name}</span>
+              <span className="name">{pinned.name}</span>
               <span className="price-row">
-                <b>{money(product.price)}</b>
-                {product.was && <s className="was">{money(product.was)}</s>}
+                <b>{money(pinned.price)}</b>
+                {pinned.was ? <s className="was">{money(pinned.was)}</s> : null}
               </span>
-              <StockBar left={left} stock={product.stock} />
+              <StockBar left={left} stock={pinned.stock} />
               <span className="note">{left > 0 ? `${left} left` : "Sold out"}</span>
             </span>
           </button>
@@ -261,12 +267,14 @@ export function LiveRoom() {
           maxLength={140}
           enterKeyHint="send"
         />
-        <button type="button" className="round gift" aria-label="Send a gift" onClick={() => openSheet({ type: "gift", creatorId: host.id })}>
-          <Icon name="gift" size={20} />
-        </button>
+        {!mine && (
+          <button type="button" className="round gift" aria-label="Send a gift" onClick={() => openSheet({ type: "gift", creatorId: host.id })}>
+            <Icon name="gift" size={20} />
+          </button>
+        )}
         <BagButton
           count={state.cart.reduce((sum, line) => sum + line.qty, 0)}
-          onClick={() => openSheet({ type: "cart" })}
+          onClick={() => openSheet({ type: "cart", liveId: room.id })}
         />
       </form>
     </section>
@@ -274,94 +282,107 @@ export function LiveRoom() {
 }
 
 export function Broadcast() {
-  const { back, credit } = useStore();
-  const [count, setCount] = useState(3);
-  const [live, setLive] = useState(false);
-  const [viewers, setViewers] = useState(1);
-  const [feature, setFeature] = useState(0);
-  const [note, setNote] = useState(null);
-  const creditRef = useRef(credit);
-  creditRef.current = credit;
-  const product = PRODUCTS[feature % PRODUCTS.length];
+  const { state, go, publishLive, pushToast } = useStore();
+  const mine = state.products.filter((product) => product.creatorId === state.profile?.id && product.stock > 0);
+  const [title, setTitle] = useState("");
+  const [picked, setPicked] = useState([]);
+  const [cover, setCover] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (live) return undefined;
-    if (count <= 0) {
-      setLive(true);
-      return undefined;
+  const toggle = (id) => {
+    setPicked((list) => (list.includes(id) ? list.filter((item) => item !== id) : [...list, id]));
+  };
+
+  const start = async (event) => {
+    event.preventDefault();
+    if (!title.trim() || picked.length === 0) return;
+    setBusy(true);
+    try {
+      const first = mine.find((product) => product.id === picked[0]);
+      const id = await publishLive({
+        title: title.trim(),
+        coverUrl: cover || first.image,
+        productIds: picked,
+      });
+      go("room", id);
+    } catch (error) {
+      pushToast(error.message);
+      setBusy(false);
     }
-    const timer = setTimeout(() => setCount((value) => value - 1), 700);
-    return () => clearTimeout(timer);
-  }, [count, live]);
+  };
 
-  useEffect(() => {
-    if (!live) return undefined;
-    const timer = setInterval(() => {
-      setViewers((value) => value + Math.ceil(Math.random() * 3));
-      if (Math.random() > 0.45) {
-        const gift = GIFTS[Math.floor(Math.random() * 3)];
-        const buyer = pick(BUYERS);
-        creditRef.current(gift.coins, `${buyer} sent ${gift.name}`);
-        setNote({ id: uid("n"), buyer, gift: gift.name, coins: gift.coins });
-      }
-    }, 3200);
-    return () => clearInterval(timer);
-  }, [live]);
+  if (mine.length === 0) {
+    return (
+      <section className="page sub">
+        <Header title="Go live" fallback="live" />
+        <div className="empty">
+          <h2>List a product first</h2>
+          <p>A live needs something you actually have in stock.</p>
+          <button type="button" className="btn" onClick={() => go("shop")}>
+            Open the shop
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <section className="stack room broadcast">
-      <div className="broadcast-stage">
-        <BoltMark size={88} />
-        {!live ? <strong className="count-num">{count}</strong> : <p>You're live</p>}
-      </div>
-      <header className="room-top">
-        <span className="live-badge">{live ? "LIVE" : "PREVIEW"}</span>
-        <span className="view-chip">
-          <Icon name="eye" size={14} /> {viewers}
-        </span>
-        <button type="button" className="btn end" onClick={() => back("feed")}>
-          End
+    <section className="page sub">
+      <Header title="Go live" fallback="live" />
+      <form className="auth-form pad" onSubmit={start}>
+        <label>
+          Title
+          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={80} required />
+        </label>
+        <PhotoField label="Cover photo" value={cover} onChange={setCover} />
+        <p className="note">Leave the cover empty to use the first product photo.</p>
+        <p className="note">Products</p>
+        {mine.map((product) => (
+          <button type="button" key={product.id} className={cx("list-row", picked.includes(product.id) && "unread")} onClick={() => toggle(product.id)}>
+            <img src={product.image} alt="" referrerPolicy="no-referrer" />
+            <span className="grow">
+              <b>{product.name}</b>
+              <span className="note">{money(product.price)} · {product.stock} left</span>
+            </span>
+          </button>
+        ))}
+        <button type="submit" className="btn block" disabled={busy || !title.trim() || picked.length === 0}>
+          {busy ? "Starting" : "Start live"}
         </button>
-      </header>
-      <div className="pin broadcast-pin">
-        <img src={product.image} alt="" referrerPolicy="no-referrer" />
-        <span className="grow">
-          <span className="note">Featuring</span>
-          <span className="name">{product.name}</span>
-          <b>{money(product.price)}</b>
-        </span>
-        <button type="button" className="btn ghost slim" onClick={() => setFeature((value) => value + 1)}>
-          Next
-        </button>
-      </div>
-      {note && (
-        <div className="gift-banner" key={note.id}>
-          <BoltMark size={42} />
-          <div>
-            <b>{note.buyer} sent {note.gift}</b>
-            <span>+{note.coins} coins</span>
-          </div>
-        </div>
-      )}
-      <p className="broadcast-note">Local preview. Nothing is streaming off this device.</p>
+      </form>
     </section>
+  );
+}
+
+export function PhotoField({ label, value, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const onFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      onChange(await uploadMedia(file));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <label>
+      {label}
+      <input type="file" accept="image/*" onChange={onFile} />
+      {busy && <span className="note">Uploading…</span>}
+      {value && <img className="upload-preview" src={value} alt="" />}
+      {error && <span className="auth-error">{error}</span>}
+    </label>
   );
 }
 
 function unitsLeft(product, state) {
   const inCart = state.cart.filter((line) => line.productId === product.id).reduce((sum, line) => sum + line.qty, 0);
-  return Math.max(0, product.stock - (state.pressure[product.id] ?? 0) - inCart);
-}
-
-function pick(list) {
-  return list[Math.floor(Math.random() * list.length)];
-}
-
-function seedThread(products) {
-  const product = products[0];
-  return [
-    { id: "a", kind: "join", user: "Ava", text: "joined" },
-    { id: "b", kind: "chat", user: "mina", text: "been waiting on this" },
-    product ? { id: "c", kind: "buy", user: "Leo", text: `grabbed ${product.name}` } : { id: "c", kind: "chat", user: "Leo", text: "this is moving" },
-  ];
+  return Math.max(0, product.stock - inCart);
 }

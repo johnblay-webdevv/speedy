@@ -1,18 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  ADDRESSES,
-  CLIPS,
-  CREATORS,
-  GIFTS,
-  PACKS,
-  PRODUCTS,
-  creatorMap,
-  isLive,
-  liveFor,
-  productMap,
-} from "./data";
+import { GIFTS, LISTING_CATEGORIES } from "./config";
 import { coinLabel, compact, cx, money, moneyExact } from "./format";
 import { BoltMark, CoinMark, Icon } from "./icons";
+import { PhotoField } from "./live";
 import { useStore } from "./store";
 import { Avatar, FollowButton } from "./ui";
 
@@ -30,7 +20,7 @@ export function Sheets() {
   }, [sheet, closeSheet]);
 
   if (!sheet) return null;
-  const tall = ["checkout", "quick", "comments", "creator", "cart"].includes(sheet.type);
+  const tall = ["checkout", "quick", "comments", "creator", "cart", "list", "post"].includes(sheet.type);
 
   return (
     <>
@@ -45,7 +35,8 @@ export function Sheets() {
         {sheet.type === "checkout" && <CheckoutSheet />}
         {sheet.type === "gift" && <GiftSheet creatorId={sheet.creatorId} />}
         {sheet.type === "bolt" && <BoltSheet />}
-        {sheet.type === "pack" && <PackSheet packId={sheet.packId} />}
+        {sheet.type === "list" && <ListSheet />}
+        {sheet.type === "post" && <PostSheet />}
       </div>
     </>
   );
@@ -53,41 +44,27 @@ export function Sheets() {
 
 function CommentsSheet({ clipId }) {
   const { state, addComment } = useStore();
-  const clip = CLIPS.find((item) => item.id === clipId);
+  const clip = state.clips.find((item) => item.id === clipId);
   const [text, setText] = useState("");
-  const [liked, setLiked] = useState({});
+  const comments = state.comments[clipId] ?? [];
   if (!clip) return null;
-  const extras = state.comments[clipId] ?? [];
-  const all = [...extras, ...clip.thread];
 
   return (
     <>
       <div className="sheet-head">
-        <h2>{compact(clip.comments + extras.length)} comments</h2>
+        <h2>{compact(comments.length)} comments</h2>
       </div>
       <div className="sheet-body">
-        {all.map((comment, index) => {
-          const key = `${comment.user}-${index}`;
-          const on = !!liked[key];
-          return (
-            <div className="comment" key={key}>
-              <span className="avatar-fallback sm">{comment.user.slice(0, 1).toUpperCase()}</span>
-              <span className="grow">
-                <b>{comment.user}</b>
-                <p>{comment.text}</p>
-              </span>
-              <button
-                type="button"
-                className={cx("comment-like", on && "on")}
-                aria-label="Like comment"
-                onClick={() => setLiked((map) => ({ ...map, [key]: !map[key] }))}
-              >
-                <Icon name="heart" size={14} filled={on} />
-                <span>{(comment.likes || 0) + (on ? 1 : 0)}</span>
-              </button>
-            </div>
-          );
-        })}
+        {comments.length === 0 && <p className="note">No comments yet.</p>}
+        {comments.map((comment) => (
+          <div className="comment" key={comment.id || `${comment.user}-${comment.text}`}>
+            <span className="avatar-fallback sm">{comment.user.slice(0, 1).toUpperCase()}</span>
+            <span className="grow">
+              <b>{comment.user}</b>
+              <p>{comment.text}</p>
+            </span>
+          </div>
+        ))}
       </div>
       <form
         className="composer"
@@ -114,68 +91,45 @@ function CommentsSheet({ clipId }) {
 }
 
 function ShareSheet({ clipId }) {
-  const { share, closeSheet } = useStore();
+  const { share } = useStore();
   return (
     <>
       <div className="sheet-head">
         <h2>Share</h2>
       </div>
       <div className="sheet-body">
-        <button type="button" className="list-row" onClick={() => share(clipId, "Link copied")}>
+        <button type="button" className="list-row" onClick={() => share(clipId)}>
           <Icon name="share" size={20} />
           <span className="grow">
             <b>Copy link</b>
-            <span className="note">speedy.app/v/{clipId}</span>
+            <span className="note">Copy a link to Speedy</span>
           </span>
         </button>
-        {CREATORS.slice(0, 5).map((creator) => (
-          <button
-            type="button"
-            key={creator.id}
-            className="list-row"
-            onClick={() => {
-              share(clipId, `Sent to ${creator.name}`);
-              closeSheet();
-            }}
-          >
-            <Avatar src={creator.avatar} name={creator.name} size={40} />
-            <span className="grow">
-              <b>{creator.name}</b>
-              <span className="note">@{creator.handle}</span>
-            </span>
-          </button>
-        ))}
       </div>
     </>
   );
 }
 
 function CreatorSheet({ creatorId }) {
-  const { go, openSheet, closeSheet } = useStore();
-  const creator = creatorMap[creatorId];
+  const { state, go, closeSheet, person, isLive, liveFor } = useStore();
+  const creator = person(creatorId);
   if (!creator) return null;
-  const clips = CLIPS.filter((clip) => clip.creatorId === creatorId);
-  const products = PRODUCTS.filter((product) => product.creatorId === creatorId);
+  const clips = state.clips.filter((clip) => clip.creatorId === creatorId);
+  const products = state.products.filter((product) => product.creatorId === creatorId);
   const live = liveFor(creatorId);
+  const mine = state.profile?.id === creator.id;
 
   return (
     <>
       <div className="sheet-head">
         <h2>{creator.name}</h2>
-        <FollowButton id={creator.id} />
+        {!mine && <FollowButton id={creator.id} />}
       </div>
       <div className="sheet-body">
         <div className="creator-top">
           <Avatar src={creator.avatar} name={creator.name} size={64} ring={isLive(creator.id)} />
           <div>
-            <b>
-              @{creator.handle}
-              {creator.verified && (
-                <span className="verified">
-                  <Icon name="verified" size={14} />
-                </span>
-              )}
-            </b>
+            <b>@{creator.handle}</b>
             <p className="note">{creator.bio}</p>
             <p className="note">{compact(creator.followers)} followers</p>
           </div>
@@ -197,8 +151,8 @@ function CreatorSheet({ creatorId }) {
             <h3>Clips</h3>
             <div className="hscroll">
               {clips.map((clip) => (
-                <button type="button" key={clip.id} onClick={() => openSheet({ type: "quick", productId: clip.productId })}>
-                  <img src={clip.image} alt="" referrerPolicy="no-referrer" style={{ objectPosition: clip.focus }} />
+                <button type="button" key={clip.id} onClick={() => clip.productId && go("product", clip.productId)}>
+                  <img src={clip.image} alt="" referrerPolicy="no-referrer" />
                 </button>
               ))}
             </div>
@@ -229,8 +183,8 @@ function CreatorSheet({ creatorId }) {
 }
 
 function QuickSheet({ productId }) {
-  const { addToCart, openSheet, pushToast } = useStore();
-  const product = productMap[productId];
+  const { state, addToCart, openSheet, pushToast, product: findProduct } = useStore();
+  const product = findProduct(productId);
   const [size, setSize] = useState(null);
   const [shake, setShake] = useState(false);
   if (!product) return null;
@@ -243,7 +197,7 @@ function QuickSheet({ productId }) {
       return;
     }
     addToCart(product.id, size, 1, { quiet: buyNow });
-    if (buyNow) openSheet({ type: "checkout" });
+    if (buyNow) openSheet({ type: "checkout", liveId: state.sheet?.liveId || null });
   };
 
   return (
@@ -287,9 +241,9 @@ function QuickSheet({ productId }) {
 }
 
 function CartSheet() {
-  const { state, changeQty, openSheet, closeSheet, go } = useStore();
-  const lines = state.cart.filter((line) => productMap[line.productId]);
-  const subtotal = lines.reduce((sum, line) => sum + productMap[line.productId].price * line.qty, 0);
+  const { state, changeQty, openSheet, closeSheet, go, product: findProduct } = useStore();
+  const lines = state.cart.filter((line) => findProduct(line.productId));
+  const subtotal = lines.reduce((sum, line) => sum + findProduct(line.productId).price * line.qty, 0);
 
   if (!lines.length) {
     return (
@@ -317,7 +271,7 @@ function CartSheet() {
       </div>
       <div className="sheet-body">
         {lines.map((line) => {
-          const product = productMap[line.productId];
+          const product = findProduct(line.productId);
           return (
             <div className="list-row static" key={line.id}>
               <img src={product.image} alt="" referrerPolicy="no-referrer" />
@@ -342,7 +296,7 @@ function CartSheet() {
           <span>Subtotal</span>
           <b>{moneyExact(subtotal)}</b>
         </div>
-        <button type="button" className="btn block" onClick={() => openSheet({ type: "checkout" })}>
+        <button type="button" className="btn block" onClick={() => openSheet({ type: "checkout", liveId: state.sheet?.liveId || null })}>
           Checkout
         </button>
       </div>
@@ -351,11 +305,13 @@ function CartSheet() {
 }
 
 function CheckoutSheet() {
-  const { state, setAddress, checkout } = useStore();
+  const { state, setAddress, addAddress, checkout, product: findProduct } = useStore();
   const [useCoins, setUseCoins] = useState(true);
-  const lines = state.cart.filter((line) => productMap[line.productId]);
-  const address = ADDRESSES.find((item) => item.id === state.addressId) ?? ADDRESSES[0];
-  const subtotal = lines.reduce((sum, line) => sum + productMap[line.productId].price * line.qty, 0);
+  const [label, setLabel] = useState("Home");
+  const [line, setLine] = useState("");
+  const lines = state.cart.filter((item) => findProduct(item.productId));
+  const address = state.addresses.find((item) => item.id === state.addressId) ?? state.addresses[0] ?? null;
+  const subtotal = lines.reduce((sum, item) => sum + findProduct(item.productId).price * item.qty, 0);
   const maxCoins = Math.min(state.coins, Math.floor(subtotal * 30));
   const applied = useCoins ? maxCoins : 0;
   const total = Math.max(0, Math.round((subtotal - applied / 100) * 100) / 100);
@@ -376,7 +332,7 @@ function CheckoutSheet() {
       </div>
       <div className="sheet-body">
         {lines.map((line) => {
-          const product = productMap[line.productId];
+          const product = findProduct(line.productId);
           return (
             <div className="list-row static" key={line.id}>
               <img src={product.image} alt="" referrerPolicy="no-referrer" />
@@ -391,15 +347,42 @@ function CheckoutSheet() {
           );
         })}
         <div className="chips">
-          {ADDRESSES.map((item) => (
-            <button type="button" key={item.id} className={cx("chip", address.id === item.id && "on")} onClick={() => setAddress(item.id)}>
+          {state.addresses.map((item) => (
+            <button type="button" key={item.id} className={cx("chip", address?.id === item.id && "on")} onClick={() => setAddress(item.id)}>
               {item.label}
             </button>
           ))}
         </div>
-        <p className="note">
-          {address.label} · {address.line}
-        </p>
+        {address ? (
+          <p className="note">
+            {address.label} · {address.line}
+          </p>
+        ) : (
+          <p className="note">Add a delivery address before you place the order.</p>
+        )}
+        <form
+          className="auth-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const saved = await addAddress(label, line);
+            if (saved) {
+              setLabel("Home");
+              setLine("");
+            }
+          }}
+        >
+          <label>
+            Address label
+            <input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} required />
+          </label>
+          <label>
+            Street
+            <input value={line} onChange={(event) => setLine(event.target.value)} maxLength={160} required />
+          </label>
+          <button type="submit" className="btn ghost block">
+            Save address
+          </button>
+        </form>
         {maxCoins > 0 ? (
           <button type="button" className="coin-toggle" onClick={() => setUseCoins((value) => !value)} aria-pressed={useCoins}>
             <span>
@@ -427,20 +410,22 @@ function CheckoutSheet() {
           <span>Total</span>
           <b>{moneyExact(total)}</b>
         </div>
-        <p className="note">You'll earn {bonus} coins. Demo checkout — nothing is charged and nothing ships.</p>
+        <p className="note">You'll earn {bonus} coins. Card payments aren't connected, so this saves the order without billing a card.</p>
         <button
           type="button"
           className="btn block"
+          disabled={!address}
           onClick={() =>
             checkout({
               total,
               spentCoins: applied,
               bonus,
-              lines: lines.map((line) => ({
-                productId: line.productId,
-                size: line.size,
-                qty: line.qty,
-                price: productMap[line.productId].price,
+              liveId: state.sheet?.liveId || null,
+              lines: lines.map((item) => ({
+                productId: item.productId,
+                size: item.size,
+                qty: item.qty,
+                price: findProduct(item.productId).price,
               })),
             })
           }
@@ -453,8 +438,8 @@ function CheckoutSheet() {
 }
 
 function GiftSheet({ creatorId }) {
-  const { state, sendGift } = useStore();
-  const creator = creatorMap[creatorId];
+  const { state, sendGift, person } = useStore();
+  const creator = person(creatorId);
   return (
     <>
       <div className="sheet-head">
@@ -492,11 +477,27 @@ function BoltSheet() {
           <CoinMark size={16} />
           <b className="num">{coinLabel(state.coins)}</b>
         </button>
+        <button type="button" className="list-row" onClick={() => openSheet({ type: "list" })}>
+          <Icon name="plus" size={20} />
+          <span className="grow">
+            <b>List a product</b>
+            <span className="note">It shows up in the shop</span>
+          </span>
+          <Icon name="chevron" size={18} />
+        </button>
+        <button type="button" className="list-row" onClick={() => openSheet({ type: "post" })}>
+          <Icon name="play" size={20} />
+          <span className="grow">
+            <b>Post a clip</b>
+            <span className="note">It shows up on the feed</span>
+          </span>
+          <Icon name="chevron" size={18} />
+        </button>
         <button type="button" className="list-row" onClick={() => jump("broadcast")}>
           <Icon name="live" size={20} />
           <span className="grow">
             <b>Go live</b>
-            <span className="note">Preview a room on this device</span>
+            <span className="note">Sell from your own products</span>
           </span>
           <Icon name="chevron" size={18} />
         </button>
@@ -512,15 +513,15 @@ function BoltSheet() {
           <CoinMark size={20} />
           <span className="grow">
             <b>Wallet</b>
-            <span className="note">Earn, packs, activity</span>
+            <span className="note">Coins you earn</span>
           </span>
           <Icon name="chevron" size={18} />
         </button>
         <button type="button" className="list-row" onClick={() => jump("shop")}>
           <Icon name="bag" size={20} />
           <span className="grow">
-            <b>Flash deals</b>
-            <span className="note">The clock is already running</span>
+            <b>Shop</b>
+            <span className="note">Products people have listed</span>
           </span>
           <Icon name="chevron" size={18} />
         </button>
@@ -539,24 +540,168 @@ function BoltSheet() {
   );
 }
 
-function PackSheet({ packId }) {
-  const { buyPack, closeSheet } = useStore();
-  const pack = PACKS.find((item) => item.id === packId);
-  if (!pack) return null;
+function ListSheet() {
+  const { closeSheet, publishProduct, pushToast } = useStore();
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [compareAt, setCompareAt] = useState("");
+  const [stock, setStock] = useState("1");
+  const [category, setCategory] = useState(LISTING_CATEGORIES[0]);
+  const [sizes, setSizes] = useState("");
+  const [description, setDescription] = useState("");
+  const [image, setImage] = useState("");
+  const [flash, setFlash] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const amount = Number(price);
+    const was = compareAt.trim() ? Number(compareAt) : null;
+    const qty = Number(stock);
+    const parsedSizes = sizes
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (!image) {
+      pushToast("Add a photo");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      pushToast("Enter a price");
+      return;
+    }
+    if (!Number.isInteger(qty) || qty < 1) {
+      pushToast("Enter stock of at least 1");
+      return;
+    }
+    if (was != null && (!(was > amount))) {
+      pushToast("Compare-at price has to be higher than the price");
+      return;
+    }
+    setBusy(true);
+    try {
+      await publishProduct({
+        name: name.trim(),
+        description: description.trim(),
+        price: amount,
+        compareAt: was,
+        stock: qty,
+        category,
+        flash,
+        sizes: parsedSizes.length ? parsedSizes : null,
+        imageUrl: image,
+      });
+      closeSheet();
+    } catch (error) {
+      pushToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className="sheet-body pack-confirm">
-      <CoinMark size={36} />
-      <h2>Add {coinLabel(pack.coins)} coins</h2>
-      <p className="price-row big">
-        <b>{moneyExact(pack.price)}</b>
-      </p>
-      <p className="note">Demo wallet. Your card is not charged.</p>
-      <button type="button" className="btn block" onClick={() => buyPack(pack)}>
-        Add coins
-      </button>
-      <button type="button" className="btn ghost block" onClick={closeSheet}>
-        Cancel
-      </button>
-    </div>
+    <>
+      <div className="sheet-head">
+        <h2>List a product</h2>
+      </div>
+      <form className="sheet-body auth-form" onSubmit={submit}>
+        <PhotoField label="Photo" value={image} onChange={setImage} />
+        <label>
+          Name
+          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required />
+        </label>
+        <label>
+          Price
+          <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" required />
+        </label>
+        <label>
+          Compare-at price
+          <input value={compareAt} onChange={(event) => setCompareAt(event.target.value)} inputMode="decimal" />
+        </label>
+        <label>
+          Stock
+          <input value={stock} onChange={(event) => setStock(event.target.value)} inputMode="numeric" required />
+        </label>
+        <label>
+          Category
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            {LISTING_CATEGORIES.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Sizes
+          <input value={sizes} onChange={(event) => setSizes(event.target.value)} placeholder="S, M, L" />
+        </label>
+        <label>
+          Description
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} />
+        </label>
+        <button type="button" className={cx("chip", flash && "on")} onClick={() => setFlash((value) => !value)}>
+          {flash ? "Flash listing" : "Mark as flash"}
+        </button>
+        <button type="submit" className="btn block" disabled={busy}>
+          {busy ? "Listing" : "List product"}
+        </button>
+      </form>
+    </>
+  );
+}
+
+function PostSheet() {
+  const { state, closeSheet, publishClip, pushToast } = useStore();
+  const [caption, setCaption] = useState("");
+  const [image, setImage] = useState("");
+  const [productId, setProductId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const mine = state.products.filter((product) => product.creatorId === state.profile?.id);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!image) {
+      pushToast("Add a photo");
+      return;
+    }
+    setBusy(true);
+    try {
+      await publishClip({ caption: caption.trim(), imageUrl: image, productId: productId || null });
+      closeSheet();
+    } catch (error) {
+      pushToast(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="sheet-head">
+        <h2>Post a clip</h2>
+      </div>
+      <form className="sheet-body auth-form" onSubmit={submit}>
+        <PhotoField label="Photo" value={image} onChange={setImage} />
+        <label>
+          Caption
+          <textarea value={caption} onChange={(event) => setCaption(event.target.value)} maxLength={300} required />
+        </label>
+        <label>
+          Product
+          <select value={productId} onChange={(event) => setProductId(event.target.value)}>
+            <option value="">None</option>
+            {mine.map((product) => (
+              <option key={product.id} value={product.id}>
+                {product.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="btn block" disabled={busy}>
+          {busy ? "Posting" : "Post"}
+        </button>
+      </form>
+    </>
   );
 }

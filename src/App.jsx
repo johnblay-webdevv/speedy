@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { INBOX, logoUrl } from "./data";
+import { AuthProvider, AuthScreen, SetupScreen, useAuth } from "./auth";
+import { logoUrl } from "./config";
 import { Feed } from "./feed";
+import { BoltMark, Icon } from "./icons";
 import { Broadcast, LiveLobby, LiveRoom } from "./live";
-import { BoltMark } from "./icons";
-import { Icon } from "./icons";
 import { Inbox, OrderFlash, Orders, Profile, Studio } from "./profile";
 import { ProductPage, SearchPage, Shop } from "./shop";
 import { Sheets } from "./sheets";
-import { useStore, StoreProvider } from "./store";
+import { StoreProvider, useStore } from "./store";
 import { cx } from "./format";
 import { Wallet } from "./wallet";
 
@@ -15,46 +15,77 @@ const SUB = new Set(["room", "broadcast", "product", "wallet", "studio", "orders
 
 export default function App() {
   return (
-    <StoreProvider>
+    <AuthProvider>
+      <Stage>
+        <Gate />
+      </Stage>
+    </AuthProvider>
+  );
+}
+
+function Stage({ children }) {
+  return (
+    <div className="stage">
+      <div className="device">
+        <div className="app">{children}</div>
+      </div>
+      <p className="stage-hint">Scroll the feed · double-tap to like · open a live to shop</p>
+    </div>
+  );
+}
+
+function Gate() {
+  const auth = useAuth();
+  if (!auth.ready) return <Splash />;
+  if (!auth.configured) return <SetupScreen />;
+  if (!auth.session) return <AuthScreen />;
+  return (
+    <StoreProvider onSignOut={auth.signOut}>
       <Shell />
     </StoreProvider>
   );
 }
 
 function Shell() {
-  const { state, go, openSheet, skipBoot } = useStore();
+  const { state, go, openSheet, skipBoot, signOut } = useStore();
+  if (state.accountError) {
+    return (
+      <div className="auth">
+        <h2>Account didn't load</h2>
+        <p className="note">{state.accountError}</p>
+        <button type="button" className="btn block" onClick={signOut}>
+          Log out
+        </button>
+      </div>
+    );
+  }
   const sub = SUB.has(state.view);
   const bag = state.cart.reduce((sum, line) => sum + line.qty, 0);
-  const unread = INBOX.filter((note) => !state.readNotes[note.id]).length;
+  const unread = state.notes.filter((note) => !note.read).length;
   const current =
     state.view === "live" ? "live" : state.view === "shop" ? "shop" : state.view === "profile" ? "profile" : "feed";
 
   return (
-    <div className="stage">
-      <div className={cx("device", (state.sheet || state.orderFlash) && "locked")}>
-        <div className="app">
-          <Feed />
-          {state.view === "live" && <LiveLobby />}
-          {state.view === "room" && <LiveRoom />}
-          {state.view === "broadcast" && <Broadcast />}
-          {state.view === "shop" && <Shop />}
-          {state.view === "product" && <ProductPage />}
-          {state.view === "wallet" && <Wallet />}
-          {state.view === "profile" && <Profile />}
-          {state.view === "studio" && <Studio />}
-          {state.view === "orders" && <Orders />}
-          {state.view === "inbox" && <Inbox />}
-          {state.view === "search" && <SearchPage />}
-          {!sub && state.view !== "feed" && <Nav current={current} bag={bag} unread={unread} solid onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
-          {!sub && state.view === "feed" && <Nav current="feed" bag={bag} unread={unread} onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
-          <Sheets />
-          <Toasts />
-          <OrderFlash />
-          {state.booting && <Splash onSkip={skipBoot} />}
-        </div>
-      </div>
-      <p className="stage-hint">Scroll the feed · double-tap to like · open a live to shop</p>
-    </div>
+    <>
+      <Feed />
+      {state.view === "live" && <LiveLobby />}
+      {state.view === "room" && <LiveRoom />}
+      {state.view === "broadcast" && <Broadcast />}
+      {state.view === "shop" && <Shop />}
+      {state.view === "product" && <ProductPage />}
+      {state.view === "wallet" && <Wallet />}
+      {state.view === "profile" && <Profile />}
+      {state.view === "studio" && <Studio />}
+      {state.view === "orders" && <Orders />}
+      {state.view === "inbox" && <Inbox />}
+      {state.view === "search" && <SearchPage />}
+      {!sub && state.view !== "feed" && <Nav current={current} bag={bag} unread={unread} solid onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
+      {!sub && state.view === "feed" && <Nav current="feed" bag={bag} unread={unread} onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
+      <Sheets />
+      <Toasts />
+      <OrderFlash />
+      {state.booting && <Splash onSkip={skipBoot} />}
+    </>
   );
 }
 

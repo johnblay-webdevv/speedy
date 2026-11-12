@@ -1,27 +1,32 @@
 import { useState } from "react";
-import { CLIPS, INBOX, ME, PRODUCTS, productMap } from "./data";
-import { coinLabel, compact, cx, moneyExact, shortDate, timeAgo, weekLabels } from "./format";
+import { cleanHandle, uploadMedia } from "./account";
+import { compact, cx, moneyExact, shortDate, timeAgo, weekLabels } from "./format";
 import { CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
 import { Avatar, Header } from "./ui";
 
 export function Profile() {
-  const { state, go, openSheet, markRead } = useStore();
+  const { state, go, openSheet, signOut, saveProfile } = useStore();
   const [tab, setTab] = useState("likes");
-  const [armed, setArmed] = useState(false);
-  const { resetDemo } = useStore();
-  const following = Object.values(state.following).filter(Boolean).length;
-  const unread = INBOX.filter((note) => !state.readNotes[note.id]).length;
-  const liked = CLIPS.filter((clip) => state.liked[clip.id]);
-  const saved = CLIPS.filter((clip) => state.savedClips[clip.id]);
-  const shelf = PRODUCTS.filter((product) => state.following[product.creatorId]);
+  const [editing, setEditing] = useState(false);
+  const profile = state.profile;
+  const unread = state.notes.filter((note) => !note.read).length;
+  const liked = state.clips.filter((clip) => state.liked[clip.id]);
+  const saved = state.clips.filter((clip) => state.savedClips[clip.id]);
+  const shelf = state.products.filter((product) => state.following[product.creatorId] || product.creatorId === profile?.id);
   const latest = state.studio.recent[0];
+  const followers = state.people.find((person) => person.id === profile?.id)?.followers || profile?.followers || 0;
+  const following = Object.values(state.following).filter(Boolean).length;
+
+  if (!profile) return null;
 
   return (
     <section className="page">
       <header className="subhead">
-        <span className="icon-btn" aria-hidden="true" />
-        <h1>@{ME.handle}</h1>
+        <button type="button" className="icon-btn" aria-label="Edit profile" onClick={() => setEditing((value) => !value)}>
+          <Icon name="plus" size={20} />
+        </button>
+        <h1>@{profile.handle}</h1>
         <button type="button" className="icon-btn" aria-label="Activity" onClick={() => go("inbox")}>
           <Icon name="comment" size={22} />
           {unread > 0 && <em>{unread}</em>}
@@ -29,12 +34,14 @@ export function Profile() {
       </header>
 
       <div className="profile-head">
-        <Avatar src={ME.avatar} name={ME.name} size={84} />
+        <Avatar src={profile.avatar} name={profile.name} size={84} />
         <div>
-          <h2>{ME.name}</h2>
-          <p className="note">{ME.bio}</p>
+          <h2>{profile.name}</h2>
+          <p className="note">{profile.bio || "Add a short bio."}</p>
         </div>
       </div>
+
+      {editing && <ProfileForm profile={profile} onSave={saveProfile} onDone={() => setEditing(false)} />}
 
       <div className="stats">
         <div>
@@ -42,31 +49,40 @@ export function Profile() {
           <span>Following</span>
         </div>
         <div>
-          <b className="num">{compact(ME.followers)}</b>
+          <b className="num">{compact(followers)}</b>
           <span>Followers</span>
         </div>
         <div>
-          <b className="num">{compact(ME.likes)}</b>
-          <span>Likes</span>
+          <b className="num">{compact(state.orders.length)}</b>
+          <span>Orders</span>
         </div>
       </div>
 
       <button type="button" className="coin-banner" onClick={() => go("wallet")}>
         <CoinMark />
         <span className="grow">
-          <b>{coinLabel(state.coins)} coins</b>
+          <b>{compact(state.coins)} coins</b>
           <span className="note">Wallet, gifts, and checkout</span>
         </span>
         <Icon name="chevron" size={18} />
       </button>
 
       <div className="order-row">
-        <OrderStat icon="card" label="Placed" count={state.orders.filter((order) => order.status === "Placed").length} />
-        <OrderStat icon="truck" label="Shipped" count={state.orders.filter((order) => order.status === "Shipped").length} />
-        <OrderStat icon="box" label="Arrived" count={state.orders.filter((order) => order.status === "Delivered").length} />
         <button type="button" onClick={() => go("orders")}>
           <Icon name="bag" size={20} />
-          <span>All</span>
+          <span>{state.orders.length} orders</span>
+        </button>
+        <button type="button" onClick={() => openSheet({ type: "list" })}>
+          <Icon name="plus" size={20} />
+          <span>List</span>
+        </button>
+        <button type="button" onClick={() => openSheet({ type: "post" })}>
+          <Icon name="play" size={20} />
+          <span>Post</span>
+        </button>
+        <button type="button" onClick={() => go("studio")}>
+          <Icon name="flash" size={20} />
+          <span>Sales</span>
         </button>
       </div>
 
@@ -98,51 +114,84 @@ export function Profile() {
               <b>{moneyExact(product.price)}</b>
             </button>
           ))}
-          {shelf.length === 0 && <p className="note pad">Follow a host and their shelf shows up here.</p>}
+          {shelf.length === 0 && <p className="note pad">Products you list, and products from people you follow, show up here.</p>}
         </div>
       ) : (
         <div className="mosaic">
           {(tab === "likes" ? liked : saved).map((clip) => (
-            <button type="button" key={clip.id} onClick={() => openSheet({ type: "quick", productId: clip.productId })}>
-              <img src={clip.image} alt="" referrerPolicy="no-referrer" style={{ objectPosition: clip.focus }} />
-              <span>
-                <Icon name="play" size={12} /> {compact(clip.likes)}
-              </span>
+            <button type="button" key={clip.id} onClick={() => openSheet({ type: "comments", clipId: clip.id })}>
+              <img src={clip.image} alt="" referrerPolicy="no-referrer" />
             </button>
           ))}
         </div>
       )}
       {tab !== "shelf" && (tab === "likes" ? liked : saved).length === 0 && (
-        <p className="note pad">{tab === "likes" ? "Double-tap a clip and it lands here." : "Save a clip from the rail and it lands here."}</p>
+        <p className="note pad">{tab === "likes" ? "Likes land here." : "Saved clips land here."}</p>
       )}
 
-      <button
-        type="button"
-        className="text-link"
-        onClick={() => {
-          if (!armed) {
-            setArmed(true);
-            return;
-          }
-          resetDemo();
-        }}
-      >
-        {armed ? "Tap again to reset demo data" : "Reset demo data"}
+      <button type="button" className="text-link" onClick={signOut}>
+        Log out
       </button>
     </section>
   );
 }
 
-function OrderStat({ icon, label, count }) {
-  const { go } = useStore();
+function ProfileForm({ profile, onSave, onDone }) {
+  const [name, setName] = useState(profile.name);
+  const [handle, setHandle] = useState(profile.handle);
+  const [bio, setBio] = useState(profile.bio);
+  const [avatar, setAvatar] = useState(profile.avatar);
+  const [busy, setBusy] = useState(false);
+
+  const onFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      setAvatar(await uploadMedia(file));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <button type="button" onClick={() => go("orders")}>
-      <Icon name={icon} size={20} />
-      <span>
-        {label}
-        {count > 0 ? ` ${count}` : ""}
-      </span>
-    </button>
+    <form
+      className="auth-form pad"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const nextHandle = cleanHandle(handle);
+        setBusy(true);
+        const ok = await onSave({
+          display_name: name.trim(),
+          handle: nextHandle,
+          bio: bio.trim(),
+          avatar_url: avatar,
+        });
+        setBusy(false);
+        if (ok) onDone();
+      }}
+    >
+      <label>
+        Photo
+        <input type="file" accept="image/*" onChange={onFile} />
+      </label>
+      <label>
+        Name
+        <input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} required />
+      </label>
+      <label>
+        Handle
+        <input value={handle} onChange={(event) => setHandle(event.target.value)} maxLength={20} required />
+      </label>
+      <label>
+        Bio
+        <textarea value={bio} onChange={(event) => setBio(event.target.value)} maxLength={160} />
+      </label>
+      <button type="submit" className="btn block" disabled={busy}>
+        {busy ? "Saving" : "Save profile"}
+      </button>
+    </form>
   );
 }
 
@@ -164,7 +213,8 @@ export function Studio() {
         <span className="note">Today</span>
         <strong className="num">{moneyExact(state.studio.today)}</strong>
         <p>
-          {state.studio.orders} orders · {state.studio.conversion}% of live viewers checked out · {moneyExact(avg)} average
+          {state.studio.orders} {state.studio.orders === 1 ? "order" : "orders"} today
+          {avg ? ` · ${moneyExact(avg)} average` : ""}
         </p>
       </section>
       <div className="section">
@@ -199,13 +249,13 @@ export function Studio() {
           </div>
         ))}
       </div>
-      <p className="note pad">Payouts in this demo settle every Friday. Nothing is transferred.</p>
+        {state.studio.recent.length === 0 && <p className="note pad">No sales yet.</p>}
     </section>
   );
 }
 
 export function Orders() {
-  const { state, go } = useStore();
+  const { state, go, product } = useStore();
   return (
     <section className="page sub">
       <Header title="Orders" fallback="profile" />
@@ -225,13 +275,17 @@ export function Orders() {
               <span className="note">{shortDate(order.at)}</span>
             </header>
             {order.items.map((item, index) => {
-              const product = productMap[item.productId];
-              if (!product) return null;
+              const listed = product(item.productId);
               return (
-                <button type="button" className="list-row" key={`${order.id}-${index}`} onClick={() => go("product", product.id)}>
-                  <img src={product.image} alt="" referrerPolicy="no-referrer" />
+                <button
+                  type="button"
+                  className="list-row"
+                  key={`${order.id}-${index}`}
+                  onClick={() => listed && go("product", listed.id)}
+                >
+                  {listed && <img src={listed.image} alt="" referrerPolicy="no-referrer" />}
                   <span className="grow">
-                    <b>{product.name}</b>
+                    <b>{listed?.name || item.name}</b>
                     <span className="note">
                       {item.size ? `Size ${item.size} · ` : ""}Qty {item.qty}
                     </span>
@@ -256,39 +310,41 @@ export function Inbox() {
   return (
     <section className="page sub">
       <Header title="Activity" fallback="profile" />
+      {state.notes.length === 0 && (
+        <div className="empty">
+          <p>No activity yet.</p>
+        </div>
+      )}
       <div className="pad-x">
-        {INBOX.map((note) => {
-          const unread = !state.readNotes[note.id];
-          return (
-            <button
-              type="button"
-              key={note.id}
-              className={cx("list-row note-row", unread && "unread")}
-              onClick={() => {
-                markRead(note.id);
-                if (note.view) go(note.view, note.param);
-              }}
-            >
-              <span className={cx("dot", !unread && "quiet")} />
-              <span className="grow">
-                <b>{note.title}</b>
-                <span className="note">{note.body}</span>
-              </span>
-              <span className="note">{timeAgo(note.at)}</span>
-            </button>
-          );
-        })}
+        {state.notes.map((note) => (
+          <button
+            type="button"
+            key={note.id}
+            className={cx("list-row note-row", !note.read && "unread")}
+            onClick={() => {
+              markRead(note.id);
+              if (note.view) go(note.view, note.param);
+            }}
+          >
+            <span className={cx("dot", note.read && "quiet")} />
+            <span className="grow">
+              <b>{note.title}</b>
+              <span className="note">{note.body}</span>
+            </span>
+            <span className="note">{timeAgo(note.at)}</span>
+          </button>
+        ))}
       </div>
     </section>
   );
 }
 
 export function OrderFlash() {
-  const { state, dismissFlash } = useStore();
+  const { state, dismissFlash, product } = useStore();
   const order = state.orderFlash;
   if (!order) return null;
   const names = order.items
-    .map((item) => productMap[item.productId]?.name)
+    .map((item) => product(item.productId)?.name || item.name)
     .filter(Boolean)
     .join(", ");
   return (
@@ -301,7 +357,7 @@ export function OrderFlash() {
       <p className="price-row big">
         <b>{moneyExact(order.total)}</b>
       </p>
-      <p className="note">You earned {order.bonus ?? 15} coins. This checkout is a demo, so nothing was charged.</p>
+      <p className="note">Saved to your account. You earned {order.bonus ?? 0} coins. Card payments aren't connected, so nothing was billed.</p>
       <button type="button" className="btn block" onClick={() => dismissFlash("orders")}>
         View orders
       </button>

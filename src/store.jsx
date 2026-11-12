@@ -1,17 +1,30 @@
-import { createContext, useContext, useEffect, useReducer, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import {
-  BUYERS,
-  GIFTS,
-  PRODUCTS,
-  SEED_LEDGER,
-  SEED_ORDERS,
-  SEED_SALES,
-  creatorMap,
-  productMap,
-} from "./data";
+  addAddress as insertAddress,
+  addComment as insertComment,
+  changeCoins,
+  createClip,
+  createLive,
+  createProduct,
+  deleteCart,
+  endLive,
+  insertCart,
+  loadAccount,
+  loadCatalog,
+  loadComments,
+  markNoteRead,
+  placeOrder,
+  selectAddress as saveSelectedAddress,
+  sendGift as giftCoins,
+  setFollow,
+  setLike,
+  setSave,
+  updateCart,
+  updateProfile,
+} from "./account";
+import { GIFTS } from "./config";
 import { uid } from "./format";
 
-const SAVE_KEY = "speedy-v1";
 const VIEWS = new Set([
   "feed",
   "live",
@@ -36,71 +49,54 @@ function readRoute() {
   return { view, param };
 }
 
-function loadSaved() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    return data && typeof data === "object" ? data : null;
-  } catch {
-    return null;
-  }
-}
-
-function asObject(value, fallback) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
-}
-
-function asNumber(value, fallback) {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
 function buildInitial() {
-  const saved = loadSaved();
   const route = readRoute();
-  const cart = Array.isArray(saved?.cart)
-    ? saved.cart.filter((line) => line && productMap[line.productId] && line.qty > 0)
-    : [];
   return {
     booting: true,
+    accountReady: false,
+    accountError: "",
     view: route.view,
     param: route.param,
     sheet: null,
     toasts: [],
     orderFlash: null,
     lastGift: null,
-    pressure: {},
-    coins: asNumber(saved?.coins, 860),
-    liked: asObject(saved?.liked, {}),
-    savedClips: asObject(saved?.savedClips, {}),
-    following: asObject(saved?.following, { nova: true, mira: true }),
-    cart,
-    orders: Array.isArray(saved?.orders) ? saved.orders : SEED_ORDERS,
-    ledger: Array.isArray(saved?.ledger) ? saved.ledger : SEED_LEDGER,
-    earned: {
-      checkin: false,
-      watch: false,
-      share: false,
-      order: false,
-      ...asObject(saved?.earned, {}),
-    },
-    readNotes: asObject(saved?.readNotes, {}),
-    addressId: typeof saved?.addressId === "string" ? saved.addressId : "home",
-    comments: asObject(saved?.comments, {}),
-    studio: {
-      today: 1284,
-      orders: 36,
-      conversion: 4.8,
-      week: [420, 510, 380, 640, 710, 880, 1284],
-      recent: SEED_SALES,
-    },
+    profile: null,
+    people: [],
+    products: [],
+    clips: [],
+    lives: [],
+    coins: 0,
+    liked: {},
+    savedClips: {},
+    following: {},
+    cart: [],
+    orders: [],
+    ledger: [],
+    earned: { checkin: false, watch: false, share: false, order: false },
+    addresses: [],
+    addressId: null,
+    notes: [],
+    sales: [],
+    studio: { today: 0, orders: 0, week: [0, 0, 0, 0, 0, 0, 0], recent: [] },
+    comments: {},
   };
+}
+
+function bumpCount(list, id, key, delta) {
+  return list.map((item) => (item.id === id ? { ...item, [key]: Math.max(0, item[key] + delta) } : item));
 }
 
 function reducer(state, action) {
   switch (action.type) {
     case "boot":
-      return { ...state, booting: false };
+      return state.accountReady ? { ...state, booting: false } : state;
+    case "hydrate":
+      return { ...state, ...action.data, booting: false, accountReady: true, accountError: "" };
+    case "hydrate-error":
+      return { ...state, booting: false, accountError: action.message };
+    case "catalog":
+      return { ...state, ...action.catalog };
     case "route":
       return { ...state, view: action.view, param: action.param ?? null, sheet: null };
     case "sheet":
@@ -111,138 +107,131 @@ function reducer(state, action) {
       return { ...state, toasts: state.toasts.filter((toast) => toast.id !== action.id) };
     case "like": {
       const on = !state.liked[action.id];
-      return { ...state, liked: { ...state.liked, [action.id]: on } };
+      return {
+        ...state,
+        liked: { ...state.liked, [action.id]: on },
+        clips: bumpCount(state.clips, action.id, "likes", on ? 1 : -1),
+      };
     }
     case "save": {
       const on = !state.savedClips[action.id];
-      return { ...state, savedClips: { ...state.savedClips, [action.id]: on } };
+      return {
+        ...state,
+        savedClips: { ...state.savedClips, [action.id]: on },
+        clips: bumpCount(state.clips, action.id, "saves", on ? 1 : -1),
+      };
     }
     case "follow": {
       const on = !state.following[action.id];
-      return { ...state, following: { ...state.following, [action.id]: on } };
-    }
-    case "comment": {
-      const list = state.comments[action.clipId] ?? [];
-      const next = [{ user: "You", text: action.text, likes: 0, mine: true }, ...list].slice(0, 40);
-      return { ...state, comments: { ...state.comments, [action.clipId]: next } };
-    }
-    case "add-cart": {
-      const size = action.size || null;
-      const qty = Math.max(1, action.qty || 1);
-      const index = state.cart.findIndex((line) => line.productId === action.productId && line.size === size);
-      const cart = state.cart.slice();
-      if (index >= 0) cart[index] = { ...cart[index], qty: cart[index].qty + qty };
-      else cart.push({ id: uid("line"), productId: action.productId, size, qty });
-      return { ...state, cart };
-    }
-    case "qty": {
-      const cart = state.cart
-        .map((line) => (line.id === action.id ? { ...line, qty: line.qty + action.delta } : line))
-        .filter((line) => line.qty > 0);
-      return { ...state, cart };
-    }
-    case "checkout": {
-      const spent = Math.max(0, action.spentCoins || 0);
-      const bonus = Math.max(0, action.bonus || 0);
-      if (spent > state.coins) return state;
-      const order = {
-        id: uid("o"),
-        items: action.lines,
-        total: action.total,
-        bonus,
-        status: "Placed",
-        at: Date.now(),
-      };
-      const ledger = [];
-      if (spent) ledger.push({ id: uid("l"), label: "Shop checkout", delta: -spent, at: Date.now() });
-      ledger.push({ id: uid("l"), label: "Order bonus", delta: bonus, at: Date.now() });
       return {
         ...state,
-        cart: [],
-        coins: state.coins - spent + bonus,
-        orders: [order, ...state.orders],
-        orderFlash: order,
-        sheet: null,
-        earned: { ...state.earned, order: true },
-        ledger: [...ledger, ...state.ledger].slice(0, 24),
+        following: { ...state.following, [action.id]: on },
+        people: state.people.map((person) =>
+          person.id === action.id ? { ...person, followers: Math.max(0, person.followers + (on ? 1 : -1)) } : person,
+        ),
       };
     }
-    case "credit":
+    case "set-comments":
+      return { ...state, comments: { ...state.comments, [action.clipId]: action.list } };
+    case "comment":
       return {
         ...state,
-        coins: state.coins + action.amount,
-        ledger: [
-          { id: uid("l"), label: action.label, delta: action.amount, at: Date.now() },
-          ...state.ledger,
-        ].slice(0, 24),
-      };
-    case "earn": {
-      if (state.earned[action.kind]) return state;
-      return {
-        ...state,
-        coins: state.coins + action.amount,
-        earned: { ...state.earned, [action.kind]: true },
-        ledger: [
-          { id: uid("l"), label: action.label, delta: action.amount, at: Date.now() },
-          ...state.ledger,
-        ].slice(0, 24),
-      };
-    }
-    case "gift": {
-      const gift = GIFTS.find((item) => item.id === action.giftId);
-      if (!gift || state.coins < gift.coins) return state;
-      const name = creatorMap[action.creatorId]?.name ?? "a host";
-      return {
-        ...state,
-        coins: state.coins - gift.coins,
-        lastGift: { ...gift, nonce: uid("g"), creatorId: action.creatorId, to: name },
-        ledger: [
-          { id: uid("l"), label: `Gifted ${gift.name} to ${name}`, delta: -gift.coins, at: Date.now() },
-          ...state.ledger,
-        ].slice(0, 24),
-      };
-    }
-    case "read":
-      return { ...state, readNotes: { ...state.readNotes, [action.id]: true } };
-    case "address":
-      return { ...state, addressId: action.id };
-    case "clear-flash":
-      return { ...state, orderFlash: null };
-    case "pressure":
-      return {
-        ...state,
-        pressure: { ...state.pressure, [action.id]: (state.pressure[action.id] ?? 0) + action.n },
-      };
-    case "live-sale": {
-      const product = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)];
-      const buyer = BUYERS[Math.floor(Math.random() * BUYERS.length)];
-      const sale = { id: uid("s"), buyer, item: product.name, amount: product.price, at: Date.now() };
-      const week = state.studio.week.slice();
-      week[6] += product.price;
-      return {
-        ...state,
-        studio: {
-          ...state.studio,
-          today: state.studio.today + product.price,
-          orders: state.studio.orders + 1,
-          week,
-          recent: [sale, ...state.studio.recent].slice(0, 12),
+        clips: bumpCount(state.clips, action.clipId, "comments", 1),
+        comments: {
+          ...state.comments,
+          [action.clipId]: [{ user: action.user, text: action.text, mine: true }, ...(state.comments[action.clipId] ?? [])].slice(0, 40),
         },
       };
+    case "add-cart": {
+      const size = action.size || null;
+      const index = state.cart.findIndex((line) => line.productId === action.productId && line.size === size);
+      const cart = state.cart.slice();
+      if (index >= 0) cart[index] = { ...cart[index], qty: cart[index].qty + action.qty };
+      else cart.push({ id: action.id, productId: action.productId, size, qty: action.qty });
+      return { ...state, cart };
     }
+    case "set-qty":
+      return {
+        ...state,
+        cart: state.cart.map((line) => (line.id === action.id ? { ...line, qty: action.qty } : line)).filter((line) => line.qty > 0),
+      };
+    case "drop-line":
+      return { ...state, cart: state.cart.filter((line) => line.id !== action.id) };
+    case "retarget-line":
+      return { ...state, cart: state.cart.map((line) => (line.id === action.from ? { ...line, id: action.to } : line)) };
+    case "checkout-sync":
+      return {
+        ...state,
+        ...action.catalog,
+        cart: [],
+        coins: action.coins,
+        orders: [action.order, ...state.orders],
+        orderFlash: action.order,
+        sheet: null,
+        earned: { ...state.earned, order: true },
+        ledger: [...action.ledger, ...state.ledger].slice(0, 24),
+      };
+    case "wallet-sync":
+      return {
+        ...state,
+        coins: action.coins,
+        earned: action.kind ? { ...state.earned, [action.kind]: true } : state.earned,
+        ledger: action.entry ? [action.entry, ...state.ledger].slice(0, 24) : state.ledger,
+        lastGift: action.gift ?? state.lastGift,
+      };
+    case "read":
+      return { ...state, notes: state.notes.map((note) => (note.id === action.id ? { ...note, read: true } : note)) };
+    case "address":
+      return { ...state, addressId: action.id };
+    case "add-address":
+      return {
+        ...state,
+        addresses: [...state.addresses, action.address],
+        addressId: state.addressId || action.address.id,
+      };
+    case "patch-profile": {
+      const profile = { ...state.profile, ...action.profile };
+      return {
+        ...state,
+        profile,
+        people: state.people.map((person) =>
+          person.id === profile.id ? { ...person, name: profile.name, handle: profile.handle, bio: profile.bio, avatar: profile.avatar } : person,
+        ),
+        products: state.products.map((product) => (product.creatorId === profile.id ? { ...product, brand: profile.name } : product)),
+      };
+    }
+    case "viewers":
+      return { ...state, lives: state.lives.map((live) => (live.id === action.id ? { ...live, viewers: action.count } : live)) };
+    case "end-live":
+      return { ...state, lives: state.lives.filter((live) => live.id !== action.id) };
+    case "clear-flash":
+      return { ...state, orderFlash: null };
     default:
       return state;
   }
 }
 
-export function StoreProvider({ children }) {
+export function StoreProvider({ onSignOut, children }) {
   const [state, dispatch] = useReducer(reducer, undefined, buildInitial);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const pending = useRef(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => dispatch({ type: "boot" }), 1050);
-    return () => clearTimeout(timer);
+    let cancel = false;
+    const started = Date.now();
+    loadAccount()
+      .then(async (data) => {
+        const wait = 600 - (Date.now() - started);
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+        if (!cancel) dispatch({ type: "hydrate", data });
+      })
+      .catch((error) => {
+        if (!cancel) dispatch({ type: "hydrate-error", message: error.message || "Couldn't load your account" });
+      });
+    return () => {
+      cancel = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -256,48 +245,10 @@ export function StoreProvider({ children }) {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  useEffect(() => {
-    const timer = setInterval(() => dispatch({ type: "live-sale" }), 20000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    const slice = {
-      coins: state.coins,
-      liked: state.liked,
-      savedClips: state.savedClips,
-      following: state.following,
-      cart: state.cart,
-      orders: state.orders,
-      ledger: state.ledger,
-      earned: state.earned,
-      readNotes: state.readNotes,
-      addressId: state.addressId,
-      comments: state.comments,
-    };
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(slice));
-    } catch {
-      /* ignore quota errors in the demo */
-    }
-  }, [
-    state.coins,
-    state.liked,
-    state.savedClips,
-    state.following,
-    state.cart,
-    state.orders,
-    state.ledger,
-    state.earned,
-    state.readNotes,
-    state.addressId,
-    state.comments,
-  ]);
-
   const pushToast = (message) => {
     const id = uid("t");
     dispatch({ type: "toast", toast: { id, message } });
-    setTimeout(() => dispatch({ type: "dismiss-toast", id }), 2500);
+    setTimeout(() => dispatch({ type: "dismiss-toast", id }), 2600);
   };
 
   const go = (view, param = null) => {
@@ -317,53 +268,145 @@ export function StoreProvider({ children }) {
     }, 0);
   };
 
-  const openSheet = (sheet) => dispatch({ type: "sheet", sheet });
+  const refreshCatalog = async () => {
+    const catalog = await loadCatalog();
+    dispatch({ type: "catalog", catalog });
+    return catalog;
+  };
+
+  const openSheet = (sheet) => {
+    dispatch({ type: "sheet", sheet });
+    if (sheet?.type === "comments" && sheet.clipId) {
+      loadComments(sheet.clipId)
+        .then((list) => dispatch({ type: "set-comments", clipId: sheet.clipId, list }))
+        .catch(() => pushToast("Couldn't load comments"));
+    }
+  };
   const closeSheet = () => dispatch({ type: "sheet", sheet: null });
 
-  const toggleLike = (id) => dispatch({ type: "like", id });
-  const toggleSave = (id) => dispatch({ type: "save", id });
-  const toggleFollow = (id) => dispatch({ type: "follow", id });
+  const toggleLike = async (id) => {
+    const on = !stateRef.current.liked[id];
+    dispatch({ type: "like", id });
+    try {
+      await setLike(id, on);
+    } catch (error) {
+      dispatch({ type: "like", id });
+      pushToast(error.message);
+    }
+  };
 
-  const addComment = (clipId, text) => {
-    const clean = text.trim();
+  const toggleSave = async (id) => {
+    const on = !stateRef.current.savedClips[id];
+    dispatch({ type: "save", id });
+    try {
+      await setSave(id, on);
+    } catch (error) {
+      dispatch({ type: "save", id });
+      pushToast(error.message);
+    }
+  };
+
+  const toggleFollow = async (id) => {
+    if (!id || id === stateRef.current.profile?.id) return;
+    const on = !stateRef.current.following[id];
+    dispatch({ type: "follow", id });
+    try {
+      await setFollow(id, on);
+    } catch (error) {
+      dispatch({ type: "follow", id });
+      pushToast(error.message);
+    }
+  };
+
+  const addComment = async (clipId, text) => {
+    const clean = text.trim().slice(0, 180);
     if (!clean) return;
-    dispatch({ type: "comment", clipId, text: clean.slice(0, 180) });
+    try {
+      await insertComment(clipId, clean);
+      dispatch({ type: "comment", clipId, text: clean, user: stateRef.current.profile?.name || "You" });
+    } catch (error) {
+      pushToast(error.message);
+    }
   };
 
-  const addToCart = (productId, size, qty = 1, options = {}) => {
-    const product = productMap[productId];
+  const addToCart = async (productId, size, qty = 1, options = {}) => {
+    const product = stateRef.current.products.find((item) => item.id === productId);
     if (!product) return;
-    dispatch({ type: "add-cart", productId, size: size || null, qty });
-    if (!options.quiet) pushToast(`${product.name} added to bag`);
+    const cleanSize = size || null;
+    const addQty = Math.max(1, qty);
+    const existing = stateRef.current.cart.find((line) => line.productId === productId && line.size === cleanSize);
+    try {
+      if (existing) {
+        const next = existing.qty + addQty;
+        dispatch({ type: "set-qty", id: existing.id, qty: next });
+        await updateCart(existing.id, next);
+      } else {
+        const temp = uid("line");
+        dispatch({ type: "add-cart", id: temp, productId, size: cleanSize, qty: addQty });
+        const id = await insertCart({ productId, size: cleanSize, qty: addQty });
+        dispatch({ type: "retarget-line", from: temp, to: id });
+      }
+      if (!options.quiet) pushToast(`${product.name} added to bag`);
+    } catch (error) {
+      pushToast(error.message);
+      const fresh = await loadAccount().catch(() => null);
+      if (fresh) dispatch({ type: "hydrate", data: { ...stateRef.current, ...fresh, booting: false } });
+    }
   };
 
-  const changeQty = (id, delta) => dispatch({ type: "qty", id, delta });
+  const changeQty = async (id, delta) => {
+    const line = stateRef.current.cart.find((item) => item.id === id);
+    if (!line) return;
+    const next = line.qty + delta;
+    const previous = line.qty;
+    if (next <= 0) dispatch({ type: "drop-line", id });
+    else dispatch({ type: "set-qty", id, qty: next });
+    try {
+      if (next <= 0) await deleteCart(id);
+      else await updateCart(id, next);
+    } catch (error) {
+      dispatch({ type: "set-qty", id, qty: previous });
+      pushToast(error.message);
+    }
+  };
 
-  const checkout = (payload) => {
+  const checkout = async (payload) => {
+    if (pending.current) return;
     if (!payload.lines?.length) return;
+    if (!stateRef.current.addressId) {
+      pushToast("Add a delivery address");
+      return;
+    }
     if ((payload.spentCoins || 0) > stateRef.current.coins) {
       pushToast("Not enough coins");
       return;
     }
-    dispatch({ type: "checkout", ...payload });
+    pending.current = true;
+    try {
+      const result = await placeOrder(payload.lines, payload.spentCoins || 0, stateRef.current.addressId, payload.liveId);
+      const catalog = await loadCatalog();
+      dispatch({ type: "checkout-sync", ...result, catalog });
+    } catch (error) {
+      pushToast(error.message);
+    } finally {
+      pending.current = false;
+    }
   };
 
-  const credit = (amount, label) => dispatch({ type: "credit", amount, label });
-
-  const earn = (kind, amount, label) => {
+  const earn = async (kind, amount, label) => {
     if (stateRef.current.earned[kind]) return false;
-    dispatch({ type: "earn", kind, amount, label });
-    pushToast(`+${amount} coins · ${label}`);
-    return true;
+    try {
+      const result = await changeCoins(amount, label, kind);
+      dispatch({ type: "wallet-sync", coins: result.coins, kind, entry: result.entry });
+      if (result.applied) pushToast(`+${amount} coins · ${label}`);
+      return result.applied;
+    } catch (error) {
+      pushToast(error.message);
+      return false;
+    }
   };
 
-  const buyPack = (pack) => {
-    credit(pack.coins, `${pack.coins.toLocaleString("en-US")} coin pack`);
-    closeSheet();
-    pushToast(`Added ${pack.coins.toLocaleString("en-US")} coins`);
-  };
-
-  const sendGift = (giftId, creatorId) => {
+  const sendGift = async (giftId, creatorId) => {
     const gift = GIFTS.find((item) => item.id === giftId);
     if (!gift) return;
     if (stateRef.current.coins < gift.coins) {
@@ -372,24 +415,104 @@ export function StoreProvider({ children }) {
       go("wallet");
       return;
     }
-    dispatch({ type: "gift", giftId, creatorId });
-    closeSheet();
-  };
-
-  const share = (clipId, label = "Link copied") => {
-    const link = `https://speedy.app/v/${clipId}`;
-    navigator.clipboard?.writeText(link).catch(() => {});
-    if (!stateRef.current.earned.share) {
-      dispatch({ type: "earn", kind: "share", amount: 5, label: "Shared a clip" });
-      pushToast(`${label} · +5 coins`);
-    } else {
-      pushToast(label);
+    const host = stateRef.current.people.find((person) => person.id === creatorId);
+    try {
+      const result = await giftCoins(creatorId, gift);
+      dispatch({
+        type: "wallet-sync",
+        coins: result.coins,
+        entry: { ...result.entry, label: `Gifted ${gift.name} to ${host?.name || "a host"}` },
+        gift: { ...gift, nonce: uid("g"), creatorId, to: host?.name || "a host" },
+      });
+      closeSheet();
+    } catch (error) {
+      pushToast(error.message);
     }
   };
 
-  const markRead = (id) => dispatch({ type: "read", id });
-  const setAddress = (id) => dispatch({ type: "address", id });
-  const bumpPressure = (id, n = 1) => dispatch({ type: "pressure", id, n });
+  const share = async (clipId) => {
+    const link = `${window.location.origin}${window.location.pathname}#/feed`;
+    navigator.clipboard?.writeText(link).catch(() => {});
+    if (!stateRef.current.earned.share) {
+      const applied = await earn("share", 5, "Shared a clip");
+      if (!applied) pushToast("Link copied");
+    } else {
+      pushToast("Link copied");
+    }
+    return clipId;
+  };
+
+  const markRead = async (id) => {
+    dispatch({ type: "read", id });
+    try {
+      await markNoteRead(id);
+    } catch (error) {
+      pushToast(error.message);
+    }
+  };
+
+  const setAddress = async (id) => {
+    dispatch({ type: "address", id });
+    try {
+      await saveSelectedAddress(id);
+    } catch (error) {
+      pushToast(error.message);
+    }
+  };
+
+  const addAddress = async (label, line) => {
+    const cleanLabel = label.trim().slice(0, 40);
+    const cleanLine = line.trim().slice(0, 160);
+    if (!cleanLabel || !cleanLine) {
+      pushToast("Add a label and street address");
+      return null;
+    }
+    try {
+      const address = await insertAddress(cleanLabel, cleanLine, stateRef.current.addresses.length === 0);
+      dispatch({ type: "add-address", address });
+      return address;
+    } catch (error) {
+      pushToast(error.message);
+      return null;
+    }
+  };
+
+  const saveProfile = async (patch) => {
+    try {
+      const profile = await updateProfile(patch);
+      dispatch({ type: "patch-profile", profile: { ...profile, followers: stateRef.current.profile?.followers || 0 } });
+      pushToast("Profile saved");
+      return true;
+    } catch (error) {
+      pushToast(error.message);
+      return false;
+    }
+  };
+
+  const publishProduct = async (input) => {
+    await createProduct(input);
+    await refreshCatalog();
+    pushToast("Listed");
+  };
+
+  const publishClip = async (input) => {
+    await createClip(input);
+    await refreshCatalog();
+    pushToast("Posted");
+  };
+
+  const publishLive = async (input) => {
+    const id = await createLive(input);
+    await refreshCatalog();
+    return id;
+  };
+
+  const stopLive = async (id) => {
+    await endLive(id);
+    dispatch({ type: "end-live", id });
+  };
+
+  const setViewers = (id, count) => dispatch({ type: "viewers", id, count });
 
   const dismissFlash = (view, param = null) => {
     dispatch({ type: "clear-flash" });
@@ -397,39 +520,48 @@ export function StoreProvider({ children }) {
   };
 
   const skipBoot = () => dispatch({ type: "boot" });
+  const signOut = () => onSignOut?.();
 
-  const resetDemo = () => {
-    localStorage.removeItem(SAVE_KEY);
-    window.location.hash = "#/feed";
-    window.location.reload();
-  };
-
-  const value = {
-    state,
-    go,
-    back,
-    openSheet,
-    closeSheet,
-    toggleLike,
-    toggleSave,
-    toggleFollow,
-    addComment,
-    addToCart,
-    changeQty,
-    checkout,
-    buyPack,
-    sendGift,
-    share,
-    earn,
-    credit,
-    markRead,
-    setAddress,
-    bumpPressure,
-    dismissFlash,
-    skipBoot,
-    resetDemo,
-    pushToast,
-  };
+  const value = useMemo(() => {
+    const person = (id) => state.people.find((item) => item.id === id) || null;
+    const product = (id) => state.products.find((item) => item.id === id) || null;
+    const live = (id) => state.lives.find((item) => item.id === id) || null;
+    return {
+      state,
+      person,
+      product,
+      live,
+      isLive: (id) => state.lives.some((item) => item.creatorId === id),
+      liveFor: (id) => state.lives.find((item) => item.creatorId === id) || null,
+      go,
+      back,
+      openSheet,
+      closeSheet,
+      toggleLike,
+      toggleSave,
+      toggleFollow,
+      addComment,
+      addToCart,
+      changeQty,
+      checkout,
+      sendGift,
+      share,
+      earn,
+      markRead,
+      setAddress,
+      addAddress,
+      saveProfile,
+      publishProduct,
+      publishClip,
+      publishLive,
+      stopLive,
+      setViewers,
+      dismissFlash,
+      skipBoot,
+      signOut,
+      pushToast,
+    };
+  }, [state]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

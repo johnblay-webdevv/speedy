@@ -1,4 +1,4 @@
-import { PACKS, TASKS } from "./data";
+import { TASKS } from "./config";
 import { coinLabel, cx, moneyExact, timeAgo } from "./format";
 import { CoinMark } from "./icons";
 import { useStore } from "./store";
@@ -30,7 +30,7 @@ export function Wallet() {
           <span className="note">Speedy Coins</span>
         </span>
         <strong className="num">{coinLabel(state.coins)}</strong>
-        <p>100 coins = $1 at checkout, up to 30% of the bag. This wallet is a demo.</p>
+        <p>100 coins = $1 at checkout, up to 30% of the bag.</p>
       </section>
 
       <div className="section">
@@ -50,26 +50,6 @@ export function Wallet() {
           );
         })}
       </div>
-
-      <div className="section">
-        <h2>Get coins</h2>
-      </div>
-      <div className="packs">
-        {PACKS.map((pack) => (
-          <button
-            type="button"
-            key={pack.id}
-            className={cx("pack", pack.tag && "pop")}
-            onClick={() => openSheet({ type: "pack", packId: pack.id })}
-          >
-            {pack.tag && <em>{pack.tag}</em>}
-            <CoinMark size={20} />
-            <b className="num">{coinLabel(pack.coins)}</b>
-            <span>{moneyExact(pack.price)}</span>
-          </button>
-        ))}
-      </div>
-      <p className="note pad">Buying coins is a demo. Nothing is charged.</p>
 
       <div className="section">
         <h2>Activity</h2>
