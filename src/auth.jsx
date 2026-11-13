@@ -60,30 +60,60 @@ VITE_SUPABASE_ANON_KEY=your_anon_key`}</pre>
   );
 }
 
+const LOGIN_STEPS = ["email", "password"];
+const SIGNUP_STEPS = ["name", "email", "password"];
+
 export function AuthScreen() {
   const { recovery, setRecovery } = useAuth();
   const [mode, setMode] = useState("login");
+  const [step, setStep] = useState(0);
   const [name, setName] = useState("");
-  const [handle, setHandle] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [nextPassword, setNextPassword] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const steps = recovery ? ["password"] : mode === "signup" ? SIGNUP_STEPS : mode === "forgot" ? ["email"] : LOGIN_STEPS;
+  const current = steps[Math.min(step, steps.length - 1)];
+
+  const go = (nextMode, nextStep = 0) => {
+    setMode(nextMode);
+    setStep(nextStep);
+    setError("");
+    setInfo("");
+  };
 
   const submit = async (event) => {
     event.preventDefault();
     setError("");
     setInfo("");
+    if (current === "name" && name.trim().length < 1) {
+      setError("Enter your name");
+      return;
+    }
+    if (current === "email" && !email.includes("@")) {
+      setError("Enter your email");
+      return;
+    }
+    if (current === "password" && password.length < 6) {
+      setError("Use 6 or more characters");
+      return;
+    }
+    if (step < steps.length - 1) {
+      setStep((value) => value + 1);
+      return;
+    }
+
     setBusy(true);
     try {
       if (recovery) {
-        if (nextPassword.length < 6) throw new Error("Use at least 6 characters");
-        const { error: updateError } = await supabase.auth.updateUser({ password: nextPassword });
+        const { error: updateError } = await supabase.auth.updateUser({ password });
         if (updateError) throw updateError;
         setRecovery(false);
-        setInfo("Password updated.");
+        setPassword("");
+        setInfo("Password updated. Log in with it.");
+        go("login", 0);
         return;
       }
       if (mode === "forgot") {
@@ -91,28 +121,18 @@ export function AuthScreen() {
           redirectTo: window.location.origin,
         });
         if (resetError) throw resetError;
-        setInfo("Reset link sent. Open it on this device, then choose a new password.");
+        setInfo("Check your email for the reset link.");
         return;
       }
       if (mode === "signup") {
-        const displayName = name.trim();
-        const nextHandle = cleanHandle(handle);
-        if (displayName.length < 1) throw new Error("Add your name");
-        if (!/^[a-z0-9_]{3,20}$/.test(nextHandle)) {
-          throw new Error("Handle must be 3 to 20 letters, numbers, or underscores");
-        }
-        if (password.length < 6) throw new Error("Use at least 6 characters");
-        const open = await handleAvailable(nextHandle);
-        if (!open) throw new Error("That handle is taken");
+        const handle = await pickHandle(name);
         const { data, error: signError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { display_name: displayName, handle: nextHandle } },
+          options: { data: { display_name: name.trim(), handle } },
         });
         if (signError) throw signError;
-        if (!data.session) {
-          setInfo("Account created. Confirm the email, then log in. You can turn off Confirm email in Supabase if you want to skip that.");
-        }
+        if (!data.session) setInfo("Check your email, then log in.");
         return;
       }
       const { error: signError } = await supabase.auth.signInWithPassword({
@@ -127,101 +147,113 @@ export function AuthScreen() {
     }
   };
 
-  const title = recovery ? "New password" : mode === "signup" ? "Create account" : mode === "forgot" ? "Reset password" : "Log in";
+  const title =
+    current === "name" ? "Your name" : current === "email" ? "Your email" : mode === "signup" ? "Choose a password" : "Your password";
+  const action = busy
+    ? "Please wait"
+    : step < steps.length - 1
+      ? "Continue"
+      : mode === "signup"
+        ? "Create account"
+        : mode === "forgot"
+          ? "Send link"
+          : recovery
+            ? "Save password"
+            : "Log in";
 
   return (
     <div className="auth">
       <Brand />
+      <Progress step={step + 1} total={steps.length} />
       <h2>{title}</h2>
       <form className="auth-form" onSubmit={submit}>
-        {mode === "signup" && !recovery && (
-          <>
-            <label>
-              Name
-              <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={40} required />
-            </label>
-            <label>
-              Handle
-              <input
-                value={handle}
-                onChange={(event) => setHandle(event.target.value)}
-                autoComplete="username"
-                maxLength={20}
-                placeholder="yourname"
-                required
-              />
-            </label>
-          </>
+        {current === "name" && (
+          <input
+            key="name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            autoComplete="name"
+            autoFocus
+            maxLength={40}
+            placeholder="Name"
+            aria-label="Name"
+          />
         )}
-        {!recovery && (
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
+        {current === "email" && (
+          <input
+            key="email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            autoComplete="email"
+            autoFocus
+            placeholder="Email"
+            aria-label="Email"
+          />
         )}
-        {mode !== "forgot" && !recovery && (
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              minLength={6}
-              required
-            />
-          </label>
-        )}
-        {recovery && (
-          <label>
-            New password
-            <input
-              type="password"
-              value={nextPassword}
-              onChange={(event) => setNextPassword(event.target.value)}
-              autoComplete="new-password"
-              minLength={6}
-              required
-            />
-          </label>
+        {current === "password" && (
+          <input
+            key="password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete={mode === "signup" || recovery ? "new-password" : "current-password"}
+            autoFocus
+            placeholder="Password"
+            aria-label="Password"
+          />
         )}
         {error && <p className="auth-error">{error}</p>}
         {info && <p className="note">{info}</p>}
         <button type="submit" className="btn block" disabled={busy}>
-          {busy ? "Please wait" : title}
+          {action}
         </button>
       </form>
-      {!recovery && mode === "login" && (
-        <p className="auth-switch">
-          <button type="button" onClick={() => { setMode("forgot"); setError(""); setInfo(""); }}>
+      <div className="auth-links">
+        {step > 0 && !info && (
+          <button type="button" onClick={() => { setStep((value) => value - 1); setError(""); }}>
+            Back
+          </button>
+        )}
+        {!recovery && mode === "login" && current === "password" && (
+          <button type="button" onClick={() => go("forgot")}>
             Forgot password
           </button>
-        </p>
-      )}
-      {!recovery && (
-        <p className="auth-switch">
-          {mode === "signup" ? "Already have an account?" : "New here?"}{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "signup" ? "login" : "signup");
-              setError("");
-              setInfo("");
-            }}
-          >
-            {mode === "signup" ? "Log in" : "Create account"}
+        )}
+        {!recovery && mode !== "forgot" && (
+          <button type="button" onClick={() => go(mode === "signup" ? "login" : "signup")}>
+            {mode === "signup" ? "I have an account" : "Create account"}
           </button>
-        </p>
-      )}
-      {mode === "login" && !recovery && <InstallButton />}
+        )}
+        {mode === "forgot" && (
+          <button type="button" onClick={() => go("login")}>
+            Back to log in
+          </button>
+        )}
+      </div>
+      {mode === "login" && current === "email" && !recovery && <InstallButton />}
     </div>
   );
+}
+
+function Progress({ step, total }) {
+  return (
+    <div className="auth-progress" aria-label={`Step ${step} of ${total}`}>
+      {Array.from({ length: total }, (_, index) => (
+        <span key={index} className={index < step ? "on" : ""} />
+      ))}
+    </div>
+  );
+}
+
+async function pickHandle(name) {
+  const base = cleanHandle(name);
+  const stem = (base.length >= 3 ? base : "user").slice(0, 16);
+  for (let n = 0; n < 30; n += 1) {
+    const handle = n === 0 ? stem : `${stem.slice(0, 16)}${n}`;
+    if (await handleAvailable(handle)) return handle;
+  }
+  throw new Error("Try a different name");
 }
 
 function InstallButton() {
