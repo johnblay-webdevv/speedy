@@ -1,188 +1,242 @@
 import { useEffect, useRef, useState } from "react";
-import { Room, RoomEvent, Track } from "livekit-client";
 import { fetchLiveToken } from "./account";
 import { Icon } from "./icons";
 
-function cameraPub(room) {
-  return [...room.localParticipant.videoTrackPublications.values()].find((pub) => pub.source === Track.Source.Camera);
+function stopStream(stream) {
+  stream?.getTracks().forEach((track) => track.stop());
 }
 
-export function LiveStream({ liveId, isHost, cover, focus, onStatus }) {
+function mountLocalVideo(stage, stream, mirror) {
+  if (!stage || !stream) return null;
+  stage.querySelectorAll("video").forEach((node) => {
+    node.srcObject = null;
+    node.remove();
+  });
+  const el = document.createElement("video");
+  el.playsInline = true;
+  el.muted = true;
+  el.autoplay = true;
+  el.srcObject = stream;
+  el.className = mirror ? "room-video mirror" : "room-video";
+  stage.appendChild(el);
+  el.play().catch(() => {});
+  return el;
+}
+
+export function LiveStream({ liveId, isHost, cover, focus }) {
   const stageRef = useRef(null);
+  const streamRef = useRef(null);
   const roomRef = useRef(null);
   const facingRef = useRef("user");
-  const [status, setStatus] = useState("connecting");
-  const [message, setMessage] = useState("Connecting…");
+  const [status, setStatus] = useState(isHost ? "starting" : "waiting");
+  const [message, setMessage] = useState(isHost ? "Opening camera…" : "Waiting for the host…");
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
 
   useEffect(() => {
-    onStatus?.(status, message);
-  }, [status, message, onStatus]);
-
-  useEffect(() => {
     if (!liveId) return undefined;
     let dead = false;
-    const room = new Room({
-      adaptiveStream: true,
-      dynacast: true,
-      videoCaptureDefaults: {
-        facingMode: "user",
-      },
-    });
-    roomRef.current = room;
-
-    const mount = (track, local = false, mirror = local) => {
-      const stage = stageRef.current;
-      if (!stage || track.kind !== Track.Kind.Video) return;
-      stage.querySelectorAll("video").forEach((node) => node.remove());
-      const el = track.attach();
-      el.playsInline = true;
-      el.muted = local;
-      el.autoplay = true;
-      el.className = mirror ? "room-video mirror" : "room-video";
-      stage.appendChild(el);
-    };
 
     const clearVideo = () => {
-      stageRef.current?.querySelectorAll("video").forEach((node) => node.remove());
-    };
-
-    const onSubscribed = (track) => {
-      if (track.kind === Track.Kind.Audio) {
-        track.attach();
-        return;
-      }
-      if (track.kind === Track.Kind.Video) {
-        mount(track, false, false);
-        setStatus("live");
-        setMessage("");
-      }
-    };
-
-    const onUnsubscribed = (track) => {
-      track.detach();
-      if (track.kind === Track.Kind.Video && !isHost) {
-        clearVideo();
-        setStatus("waiting");
-        setMessage("Waiting for the host's camera…");
-      }
-    };
-
-    room
-      .on(RoomEvent.TrackSubscribed, onSubscribed)
-      .on(RoomEvent.TrackUnsubscribed, onUnsubscribed)
-      .on(RoomEvent.TrackMuted, (pub) => {
-        if (!isHost && pub.kind === Track.Kind.Video) {
-          clearVideo();
-          setStatus("waiting");
-          setMessage("Host turned the camera off");
-        }
-      })
-      .on(RoomEvent.TrackUnmuted, (pub) => {
-        if (!isHost && pub.kind === Track.Kind.Video && pub.track) {
-          mount(pub.track, false, false);
-          setStatus("live");
-          setMessage("");
-        }
-      })
-      .on(RoomEvent.Disconnected, () => {
-        if (!dead) {
-          setStatus("ended");
-          setMessage("Stream disconnected");
-        }
+      stageRef.current?.querySelectorAll("video, audio").forEach((node) => {
+        node.srcObject = null;
+        node.remove();
       });
+    };
 
-    (async () => {
+    const openLocalCamera = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          facingMode: facingRef.current,
+          width: { ideal: 720 },
+          height: { ideal: 1280 },
+        },
+      });
+      if (dead) {
+        stopStream(stream);
+        return null;
+      }
+      streamRef.current = stream;
+      mountLocalVideo(stageRef.current, stream, facingRef.current === "user");
+      setMicOn(true);
+      setCamOn(true);
+      setStatus("live");
+      setMessage("");
+      return stream;
+    };
+
+    const tryLiveKit = async (localStream) => {
       try {
+        const { Room, RoomEvent, Track } = await import("livekit-client");
         const { token, url } = await fetchLiveToken(liveId);
         if (dead) return;
-        await room.connect(url, token);
-        if (dead) return;
 
-        if (isHost) {
-          await room.localParticipant.setCameraEnabled(true);
-          await room.localParticipant.setMicrophoneEnabled(true);
-          const cam = cameraPub(room)?.track;
-          if (cam) mount(cam, true, facingRef.current === "user");
-          setStatus("live");
-          setMessage("");
-          setMicOn(true);
-          setCamOn(true);
-        } else {
+        const room = new Room({ adaptiveStream: true, dynacast: true });
+        roomRef.current = room;
+
+        if (!isHost) {
+          room.on(RoomEvent.TrackSubscribed, (track) => {
+            if (dead) return;
+            if (track.kind === Track.Kind.Audio) {
+              track.attach();
+              return;
+            }
+            if (track.kind !== Track.Kind.Video) return;
+            const stage = stageRef.current;
+            if (!stage) return;
+            stage.querySelectorAll("video").forEach((node) => node.remove());
+            const el = track.attach();
+            el.playsInline = true;
+            el.autoplay = true;
+            el.className = "room-video";
+            stage.appendChild(el);
+            setStatus("live");
+            setMessage("");
+          });
+          room.on(RoomEvent.TrackUnsubscribed, (track) => {
+            track.detach();
+            if (track.kind === Track.Kind.Video) {
+              clearVideo();
+              setStatus("waiting");
+              setMessage("Waiting for the host…");
+            }
+          });
+        }
+
+        await room.connect(url, token);
+        if (dead) {
+          room.disconnect();
+          return;
+        }
+
+        if (isHost && localStream) {
+          const video = localStream.getVideoTracks()[0];
+          const audio = localStream.getAudioTracks()[0];
+          if (video) await room.localParticipant.publishTrack(video);
+          if (audio) await room.localParticipant.publishTrack(audio);
+        } else if (!isHost) {
           const remote = [...room.remoteParticipants.values()][0];
           const video = remote && [...remote.videoTrackPublications.values()].find((pub) => pub.track)?.track;
           if (video) {
-            mount(video, false, false);
+            const stage = stageRef.current;
+            if (stage) {
+              stage.querySelectorAll("video").forEach((node) => node.remove());
+              const el = video.attach();
+              el.playsInline = true;
+              el.autoplay = true;
+              el.className = "room-video";
+              stage.appendChild(el);
+            }
             setStatus("live");
             setMessage("");
-          } else {
-            setStatus("waiting");
-            setMessage("Waiting for the host's camera…");
           }
           remote?.audioTrackPublications.forEach((pub) => pub.track?.attach());
         }
+      } catch {
+        // Local camera still works for the host even if remote streaming isn't ready.
+        if (!isHost && !dead) {
+          setStatus("waiting");
+          setMessage("Waiting for the host…");
+        }
+      }
+    };
+
+    (async () => {
+      try {
+        if (isHost) {
+          if (!navigator.mediaDevices?.getUserMedia) {
+            setStatus("error");
+            setMessage("Camera needs HTTPS on your phone or laptop.");
+            return;
+          }
+          const local = await openLocalCamera();
+          if (!dead) await tryLiveKit(local);
+        } else {
+          setStatus("waiting");
+          setMessage("Waiting for the host…");
+          await tryLiveKit(null);
+        }
       } catch (error) {
         if (dead) return;
-        setStatus("error");
-        const raw = error.message || "Couldn't start the camera";
-        setMessage(
-          /invalid token/i.test(raw)
-            ? "Camera keys look wrong. Recreate a LiveKit key and update LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET on Vercel, then redeploy."
-            : raw,
-        );
+        if (isHost) {
+          setStatus("error");
+          setMessage(
+            /NotAllowed|Permission/i.test(error.name || error.message || "")
+              ? "Allow camera and mic, then try again."
+              : error.message || "Couldn't open the camera",
+          );
+        } else {
+          setStatus("waiting");
+          setMessage("Waiting for the host…");
+        }
       }
     })();
 
     return () => {
       dead = true;
-      room.removeAllListeners();
-      room.disconnect();
+      roomRef.current?.disconnect();
       roomRef.current = null;
+      stopStream(streamRef.current);
+      streamRef.current = null;
       clearVideo();
     };
   }, [liveId, isHost]);
 
-  const toggleMic = async () => {
-    const room = roomRef.current;
-    if (!room || !isHost) return;
-    const next = !micOn;
-    await room.localParticipant.setMicrophoneEnabled(next);
-    setMicOn(next);
+  const toggleMic = () => {
+    const track = streamRef.current?.getAudioTracks()[0];
+    if (!track || !isHost) return;
+    track.enabled = !track.enabled;
+    setMicOn(track.enabled);
   };
 
-  const toggleCam = async () => {
-    const room = roomRef.current;
-    if (!room || !isHost) return;
-    const next = !camOn;
-    await room.localParticipant.setCameraEnabled(next);
-    setCamOn(next);
-    if (!next) {
+  const toggleCam = () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track || !isHost) return;
+    track.enabled = !track.enabled;
+    setCamOn(track.enabled);
+    if (!track.enabled) {
       stageRef.current?.querySelectorAll("video").forEach((node) => node.remove());
-      return;
+    } else {
+      mountLocalVideo(stageRef.current, streamRef.current, facingRef.current === "user");
     }
-    const cam = cameraPub(room)?.track;
-    if (!cam) return;
-    stageRef.current?.querySelectorAll("video").forEach((node) => node.remove());
-    const el = cam.attach();
-    el.playsInline = true;
-    el.muted = true;
-    el.autoplay = true;
-    el.className = facingRef.current === "user" ? "room-video mirror" : "room-video";
-    stageRef.current?.appendChild(el);
   };
 
   const flipCam = async () => {
-    const room = roomRef.current;
-    const pub = room && isHost && camOn ? cameraPub(room) : null;
-    if (!pub?.track) return;
+    if (!isHost || !camOn || !navigator.mediaDevices?.getUserMedia) return;
     const next = facingRef.current === "user" ? "environment" : "user";
     try {
-      await pub.track.restartTrack({ facingMode: next });
-      facingRef.current = next;
-      stageRef.current?.querySelectorAll("video").forEach((node) => {
-        node.className = next === "user" ? "room-video mirror" : "room-video";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          facingMode: { ideal: next },
+          width: { ideal: 720 },
+          height: { ideal: 1280 },
+        },
       });
+      stopStream(streamRef.current);
+      streamRef.current = stream;
+      facingRef.current = next;
+      mountLocalVideo(stageRef.current, stream, next === "user");
+      setMicOn(true);
+      setCamOn(true);
+
+      const room = roomRef.current;
+      if (room) {
+        try {
+          const { Track } = await import("livekit-client");
+          const oldVideo = [...room.localParticipant.videoTrackPublications.values()].find((pub) => pub.source === Track.Source.Camera);
+          const oldAudio = [...room.localParticipant.audioTrackPublications.values()].find((pub) => pub.source === Track.Source.Microphone);
+          if (oldVideo?.track) await room.localParticipant.unpublishTrack(oldVideo.track);
+          if (oldAudio?.track) await room.localParticipant.unpublishTrack(oldAudio.track);
+          const video = stream.getVideoTracks()[0];
+          const audio = stream.getAudioTracks()[0];
+          if (video) await room.localParticipant.publishTrack(video);
+          if (audio) await room.localParticipant.publishTrack(audio);
+        } catch {
+          // Keep local preview even if republish fails.
+        }
+      }
     } catch {
       setMessage("Couldn't flip the camera");
     }
