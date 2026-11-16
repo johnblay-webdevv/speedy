@@ -27,13 +27,22 @@ function trimNumber(value, digits) {
 export function money(n) {
   const value = Math.round(Number(n) * 100) / 100;
   if (!Number.isFinite(value)) return "$0";
-  return Number.isInteger(value) ? `$${value}` : `$${value.toFixed(2)}`;
+  const digits = Number.isInteger(value) ? 0 : 2;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
 export function moneyExact(n) {
   const value = Number(n);
   if (!Number.isFinite(value)) return "$0.00";
-  return `$${value.toFixed(2)}`;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function plural(count, word, many = `${word}s`) {
+  return `${count} ${count === 1 ? word : many}`;
+}
+
+export function isVideo(url) {
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url || "");
 }
 
 export function coinLabel(n) {

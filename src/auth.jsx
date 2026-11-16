@@ -73,6 +73,8 @@ export function AuthScreen() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
+  const [switchToLogin, setSwitchToLogin] = useState(false);
 
   const steps = recovery ? ["password"] : mode === "signup" ? SIGNUP_STEPS : mode === "forgot" ? ["email"] : LOGIN_STEPS;
   const current = steps[Math.min(step, steps.length - 1)];
@@ -82,18 +84,20 @@ export function AuthScreen() {
     setStep(nextStep);
     setError("");
     setInfo("");
+    setSwitchToLogin(false);
   };
 
   const submit = async (event) => {
     event.preventDefault();
     setError("");
     setInfo("");
+    setSwitchToLogin(false);
     if (current === "name" && name.trim().length < 1) {
       setError("Enter your name");
       return;
     }
-    if (current === "email" && !email.includes("@")) {
-      setError("Enter your email");
+    if (current === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("Enter a valid email, like name@example.com");
       return;
     }
     if (current === "password" && password.length < 6) {
@@ -110,10 +114,8 @@ export function AuthScreen() {
       if (recovery) {
         const { error: updateError } = await supabase.auth.updateUser({ password });
         if (updateError) throw updateError;
-        setRecovery(false);
         setPassword("");
-        setInfo("Password updated. Log in with it.");
-        go("login", 0);
+        setRecovery(false);
         return;
       }
       if (mode === "forgot") {
@@ -141,14 +143,27 @@ export function AuthScreen() {
       });
       if (signError) throw signError;
     } catch (err) {
-      setError(err.message || "Something went wrong");
+      const message = authMessage(err?.message);
+      setError(message);
+      if (mode === "signup" && /already has an account/.test(message)) setSwitchToLogin(true);
     } finally {
       setBusy(false);
     }
   };
 
-  const title =
-    current === "name" ? "Your name" : current === "email" ? "Your email" : mode === "signup" ? "Choose a password" : "Your password";
+  const title = recovery
+    ? "New password"
+    : mode === "forgot"
+      ? "Reset password"
+      : current === "name"
+        ? "What's your name?"
+        : current === "email"
+          ? mode === "signup"
+            ? "Your email"
+            : "Log in"
+          : mode === "signup"
+            ? "Create a password"
+            : "Enter your password";
   const action = busy
     ? "Please wait"
     : step < steps.length - 1
@@ -192,18 +207,29 @@ export function AuthScreen() {
           />
         )}
         {current === "password" && (
-          <input
-            key="password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete={mode === "signup" || recovery ? "new-password" : "current-password"}
-            autoFocus
-            placeholder="Password"
-            aria-label="Password"
-          />
+          <span className="pw-wrap">
+            <input
+              key="password"
+              type={show ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={mode === "signup" || recovery ? "new-password" : "current-password"}
+              autoFocus
+              placeholder={mode === "signup" || recovery ? "6+ characters" : "Password"}
+              aria-label="Password"
+            />
+            <button type="button" className="pw-toggle" onClick={() => setShow((value) => !value)}>
+              {show ? "Hide" : "Show"}
+            </button>
+          </span>
         )}
+        {current === "password" && mode === "login" && !recovery && email && <p className="note">{email.trim()}</p>}
         {error && <p className="auth-error">{error}</p>}
+        {switchToLogin && (
+          <button type="button" className="btn ghost block" onClick={() => go("login", 1)}>
+            Log in instead
+          </button>
+        )}
         {info && <p className="note">{info}</p>}
         <button type="submit" className="btn block" disabled={busy}>
           {action}
@@ -234,6 +260,22 @@ export function AuthScreen() {
       {mode === "login" && current === "email" && !recovery && <InstallButton />}
     </div>
   );
+}
+
+const AUTH_ERRORS = [
+  [/invalid login credentials/i, "Wrong email or password. Try again."],
+  [/already registered|already been registered|user already exists/i, "That email already has an account."],
+  [/email not confirmed/i, "Confirm your email first. Check your inbox for the link."],
+  [/rate limit|security purposes|too many/i, "Too many tries. Wait a minute and try again."],
+  [/invalid format|unable to validate email/i, "That email doesn't look right."],
+  [/weak|password should/i, "Pick a stronger password with 6 or more characters."],
+  [/failed to fetch|network/i, "No connection. Check your internet and try again."],
+  [/same.*password|different from the old/i, "Use a password you haven't used before."],
+];
+
+function authMessage(message = "") {
+  const hit = AUTH_ERRORS.find(([pattern]) => pattern.test(message));
+  return hit ? hit[1] : message || "Something went wrong. Try again.";
 }
 
 function Progress({ step, total }) {

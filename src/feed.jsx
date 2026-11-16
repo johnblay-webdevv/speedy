@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { coinLabel, compact, cx, money, uid } from "./format";
+import { coinLabel, compact, cx, isVideo, money, uid } from "./format";
 import { CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
 import { Avatar, FollowButton } from "./ui";
@@ -9,22 +9,61 @@ export function Feed() {
   const [feedTab, setFeedTab] = useState("foryou");
   const [active, setActive] = useState(null);
   const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [pop, setPop] = useState(false);
   const scrollerRef = useRef(null);
+  const landed = useRef(null);
   const prevCoins = useRef(state.coins);
+  const visible = state.view === "feed";
 
-  const catalog = useMemo(() => {
+  const source = useMemo(() => {
     if (feedTab === "following") return state.clips.filter((clip) => state.following[clip.creatorId]);
     return state.clips;
   }, [feedTab, state.clips, state.following]);
-
-  const catalogKey = catalog.map((clip) => clip.id).join("|");
-  const items = catalog;
+  const sourceKey = source.map((clip) => clip.id).join("|");
+  const [order, setOrder] = useState(() => source.map((clip) => clip.id));
 
   useEffect(() => {
+    setOrder((previous) => {
+      const ids = new Set(source.map((clip) => clip.id));
+      const kept = previous.filter((id) => ids.has(id));
+      const known = new Set(kept);
+      const fresh = source.filter((clip) => !known.has(clip.id));
+      if (!kept.length) return fresh.map((clip) => clip.id);
+      const own = fresh.filter((clip) => clip.creatorId === state.profile?.id).map((clip) => clip.id);
+      const others = fresh.filter((clip) => clip.creatorId !== state.profile?.id).map((clip) => clip.id);
+      return [...own, ...kept, ...others];
+    });
+  }, [sourceKey]);
+
+  useEffect(() => {
+    setOrder(source.map((clip) => clip.id));
     setPaused(false);
-    scrollerRef.current?.scrollTo({ top: 0 });
-  }, [feedTab, catalogKey]);
+    scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [feedTab, state.feedTick]);
+
+  const items = useMemo(() => {
+    const byId = Object.fromEntries(state.clips.map((clip) => [clip.id, clip]));
+    return order.map((id) => byId[id]).filter(Boolean);
+  }, [order, state.clips]);
+
+  useEffect(() => {
+    if (!visible) {
+      landed.current = null;
+      return;
+    }
+    if (!state.param || landed.current === state.param) return;
+    if (feedTab === "following" && !source.some((clip) => clip.id === state.param)) {
+      setFeedTab("foryou");
+      return;
+    }
+    const card = scrollerRef.current?.querySelector(`[data-clip="${CSS.escape(state.param)}"]`);
+    if (card) {
+      scrollerRef.current.scrollTo({ top: card.offsetTop });
+      setActive(state.param);
+      landed.current = state.param;
+    }
+  }, [visible, state.param, items.length, feedTab]);
 
   useEffect(() => {
     if (prevCoins.current !== state.coins) {
@@ -46,16 +85,16 @@ export function Feed() {
     const cards = [...root.querySelectorAll("[data-clip]")];
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries
+        const seen = entries
           .filter((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.62)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (visible) setActive(visible.target.dataset.clip);
+        if (seen) setActive(seen.target.dataset.clip);
       },
       { root, threshold: [0.62, 0.85] },
     );
     cards.forEach((card) => observer.observe(card));
     return () => observer.disconnect();
-  }, [items.length, feedTab]);
+  }, [items.map((clip) => clip.id).join("|"), feedTab]);
 
   useEffect(() => {
     const onKey = (event) => {
@@ -79,17 +118,18 @@ export function Feed() {
   const suggestions = state.people.filter((creator) => creator.id !== state.profile?.id && !state.following[creator.id]).slice(0, 6);
 
   return (
-    <section className={state.view === "feed" ? "feed" : "feed is-hidden"} aria-label="Speedy feed">
+    <section className={visible ? "feed" : "feed is-hidden"} aria-label="Speedy feed">
       <div className="feed-scroller" ref={scrollerRef}>
         {items.length === 0 && (
           <div className="empty">
             <h2>{feedTab === "following" ? "Nothing from people you follow" : "No posts yet"}</h2>
-            <p>{feedTab === "following" ? "Follow someone, or post a clip of your own." : "Post a clip when you have something to show."}</p>
+            <p>{feedTab === "following" ? "Follow someone to see their posts here." : "Be the first. Post a photo or a short video."}</p>
             <button type="button" className="btn" onClick={() => openSheet({ type: "post" })}>
-              Post a clip
+              Post something
             </button>
             {feedTab === "following" && suggestions.length > 0 && (
               <div className="suggest">
+                <span className="note">People on Speedy</span>
                 {suggestions.map((creator) => (
                   <div className="person" key={creator.id}>
                     <button type="button" onClick={() => openSheet({ type: "creator", creatorId: creator.id })} aria-label={creator.name}>
@@ -111,7 +151,11 @@ export function Feed() {
             key={clip.id}
             clip={clip}
             active={active === clip.id}
+            playing={visible && active === clip.id && !paused}
             paused={paused && active === clip.id}
+            muted={muted}
+            onMute={() => setMuted((value) => !value)}
+            onAutoMute={() => setMuted(true)}
             onTogglePause={() => setPaused((value) => !value)}
             onLike={() => {
               if (!state.liked[clip.id]) toggleLike(clip.id);
@@ -120,15 +164,18 @@ export function Feed() {
         ))}
         {items.length > 0 && (
           <section className="clip endcap">
-            <h2>That's everything</h2>
-            <p>New posts show up here.</p>
+            <h2>You're all caught up</h2>
+            <p>New posts show up here as people share them.</p>
+            <button type="button" className="btn ghost" onClick={() => scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
+              Back to top
+            </button>
           </section>
         )}
       </div>
       <header className="feed-top">
         <div className="feed-side">
           <button type="button" className="live-pill" onClick={() => go("live")}>
-            <i className="dot ping" />
+            <i className={cx("dot", state.lives.length > 0 ? "ping" : "quiet")} />
             LIVE
           </button>
         </div>
@@ -141,7 +188,10 @@ export function Feed() {
           </button>
         </div>
         <div className="feed-side right">
-          <button type="button" className={cx("coin-pill", pop && "pop-num")} onClick={() => go("wallet")}>
+          <button type="button" className="icon-btn feed-search" aria-label="Search" onClick={() => go("search")}>
+            <Icon name="search" size={22} />
+          </button>
+          <button type="button" className={cx("coin-pill", pop && "pop-num")} onClick={() => go("wallet")} aria-label={`${state.coins} coins`}>
             <CoinMark size={16} />
             <span className="num">{coinLabel(state.coins)}</span>
           </button>
@@ -151,18 +201,41 @@ export function Feed() {
   );
 }
 
-function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
+function ClipCard({ clip, active, playing, paused, muted, onMute, onAutoMute, onTogglePause, onLike }) {
   const { state, openSheet, toggleFollow, toggleLike, toggleSave, person, product, isLive } = useStore();
   const creator = person(clip.creatorId);
   const linked = clip.productId ? product(clip.productId) : null;
   const [hearts, setHearts] = useState([]);
-  const [run, setRun] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [expanded, setExpanded] = useState(false);
   const tap = useRef({ time: 0, timer: 0, x: 0, y: 0 });
+  const videoRef = useRef(null);
+  const video = isVideo(clip.image);
   const liked = !!state.liked[clip.id];
   const saved = !!state.savedClips[clip.id];
+  const mine = clip.creatorId === state.profile?.id;
 
   useEffect(() => {
-    if (active) setRun((value) => value + 1);
+    const element = videoRef.current;
+    if (!element) return;
+    if (!playing) {
+      element.pause();
+      return;
+    }
+    element.muted = muted;
+    element.play().catch(() => {
+      if (!element.muted) {
+        element.muted = true;
+        onAutoMute();
+        element.play().catch(() => {});
+      }
+    });
+  }, [playing, muted]);
+
+  useEffect(() => {
+    if (active || !videoRef.current) return;
+    videoRef.current.currentTime = 0;
+    setProgress(0);
   }, [active]);
 
   const burst = (x, y) => {
@@ -194,7 +267,7 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
     tap.current.time = now;
     const stamp = now;
     tap.current.timer = window.setTimeout(() => {
-      if (tap.current.time === stamp) onTogglePause();
+      if (tap.current.time === stamp && video) onTogglePause();
     }, 280);
   };
 
@@ -208,17 +281,32 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
       onPointerUp={onPointerUp}
     >
       <div className="clip-bg" style={{ background: clip.gradient, "--glow": clip.tint }}>
-        {clip.word && <div className="clip-word">{clip.word}</div>}
-        <img
-          src={clip.image}
-          alt=""
-          style={{ objectPosition: clip.focus }}
-          referrerPolicy="no-referrer"
-          draggable="false"
-          loading="lazy"
-          onLoad={(event) => event.currentTarget.classList.add("show")}
-          onError={(event) => event.currentTarget.remove()}
-        />
+        {video ? (
+          <video
+            ref={videoRef}
+            className="show"
+            src={clip.image}
+            loop
+            playsInline
+            muted={muted}
+            preload={active ? "auto" : "metadata"}
+            onTimeUpdate={(event) => {
+              const { currentTime, duration } = event.currentTarget;
+              if (duration) setProgress(currentTime / duration);
+            }}
+          />
+        ) : (
+          <img
+            src={clip.image}
+            alt=""
+            style={{ objectPosition: clip.focus }}
+            referrerPolicy="no-referrer"
+            draggable="false"
+            loading="lazy"
+            onLoad={(event) => event.currentTarget.classList.add("show")}
+            onError={(event) => event.currentTarget.remove()}
+          />
+        )}
         <div className="clip-shade" />
       </div>
 
@@ -236,12 +324,18 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
         </div>
       )}
 
+      {video && (
+        <button type="button" className="mute-btn" aria-label={muted ? "Turn sound on" : "Mute"} onClick={onMute}>
+          <Icon name={muted ? "muted" : "sound"} size={20} />
+        </button>
+      )}
+
       <div className="rail">
         <div className="avatar-wrap">
           <button type="button" aria-label={creator.name} onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
             <Avatar src={creator.avatar} name={creator.name} size={46} ring={isLive(creator.id)} />
           </button>
-          {creator.id !== state.profile?.id && !state.following[creator.id] && (
+          {!mine && !state.following[creator.id] && (
             <button type="button" className="avatar-plus" aria-label={`Follow ${creator.name}`} onClick={() => toggleFollow(creator.id)}>
               <Icon name="plus" size={12} />
             </button>
@@ -261,8 +355,13 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
         </button>
         <button type="button" aria-label="Share" onClick={() => openSheet({ type: "share", clipId: clip.id })}>
           <Icon name="share" size={28} />
+          <span className="count">Share</span>
         </button>
-        {creator.avatar && <img className="disc" src={creator.avatar} alt="" referrerPolicy="no-referrer" />}
+        {mine && (
+          <button type="button" aria-label="More options" onClick={() => openSheet({ type: "clip-menu", clipId: clip.id })}>
+            <Icon name="more" size={28} />
+          </button>
+        )}
       </div>
 
       <div className="clip-meta">
@@ -274,27 +373,27 @@ function ClipCard({ clip, active, paused, onTogglePause, onLike }) {
               <span className="price-row">
                 <b>{money(linked.price)}</b>
                 {linked.was ? <s className="was">{money(linked.was)}</s> : null}
-                <span className="note"> · {compact(linked.sold)} sold</span>
+                <span className="note"> · {linked.stock > 0 ? `${compact(linked.sold)} sold` : "Sold out"}</span>
               </span>
             </span>
             <span className="shop-chip">Shop</span>
           </button>
         )}
-        <button type="button" className="handle" onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
+        <button type="button" className="clip-handle" onClick={() => openSheet({ type: "creator", creatorId: creator.id })}>
           @{creator.handle}
         </button>
-        <p className="caption">{clip.caption}</p>
-        {clip.audio && (
-          <div className="sound">
-            <Icon name="music" size={14} />
-            <span>{clip.audio}</span>
-          </div>
+        {clip.caption && (
+          <button type="button" className={cx("caption", expanded && "open")} onClick={() => setExpanded((value) => !value)}>
+            {clip.caption}
+          </button>
         )}
       </div>
 
-      <div className="scrub" aria-hidden="true">
-        {active && <i key={run} className={paused ? "paused" : ""} />}
-      </div>
+      {video && (
+        <div className="scrub" aria-hidden="true">
+          <i style={{ width: `${Math.round(progress * 1000) / 10}%` }} />
+        </div>
+      )}
     </article>
   );
 }

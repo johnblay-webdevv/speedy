@@ -1,135 +1,175 @@
 import { useState } from "react";
-import { cleanHandle, uploadMedia } from "./account";
-import { compact, cx, moneyExact, shortDate, timeAgo, weekLabels } from "./format";
+import { cleanHandle } from "./account";
+import { coinLabel, compact, cx, money, moneyExact, shortDate, timeAgo, weekLabels } from "./format";
 import { CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
-import { Avatar, Header } from "./ui";
+import { Avatar, Header, MediaPicker, Thumb } from "./ui";
+
+const TABS = [
+  { id: "posts", label: "Posts" },
+  { id: "shop", label: "Shop" },
+  { id: "liked", label: "Liked" },
+  { id: "saved", label: "Saved" },
+];
 
 export function Profile() {
   const { state, go, openSheet, signOut, saveProfile } = useStore();
-  const [tab, setTab] = useState("likes");
+  const [tab, setTab] = useState("posts");
   const [editing, setEditing] = useState(false);
   const profile = state.profile;
+  if (!profile) return null;
+
   const unread = state.notes.filter((note) => !note.read).length;
+  const posts = state.clips.filter((clip) => clip.creatorId === profile.id);
+  const listings = state.products.filter((product) => product.creatorId === profile.id);
   const liked = state.clips.filter((clip) => state.liked[clip.id]);
   const saved = state.clips.filter((clip) => state.savedClips[clip.id]);
-  const shelf = state.products.filter((product) => state.following[product.creatorId] || product.creatorId === profile?.id);
-  const latest = state.studio.recent[0];
-  const followers = state.people.find((person) => person.id === profile?.id)?.followers || profile?.followers || 0;
+  const followers = state.people.find((person) => person.id === profile.id)?.followers || profile.followers || 0;
   const following = Object.values(state.following).filter(Boolean).length;
+  const likes = posts.reduce((sum, clip) => sum + clip.likes, 0);
+  const clips = tab === "posts" ? posts : tab === "liked" ? liked : saved;
 
-  if (!profile) return null;
+  if (editing) {
+    return (
+      <section className="page">
+        <header className="subhead">
+          <button type="button" className="icon-btn" aria-label="Cancel" onClick={() => setEditing(false)}>
+            <Icon name="close" size={24} />
+          </button>
+          <h1>Edit profile</h1>
+          <span className="icon-btn" aria-hidden="true" />
+        </header>
+        <ProfileForm profile={profile} onSave={saveProfile} onDone={() => setEditing(false)} />
+      </section>
+    );
+  }
 
   return (
     <section className="page">
       <header className="subhead">
-        <button type="button" className="icon-btn" aria-label="Edit profile" onClick={() => setEditing((value) => !value)}>
-          <Icon name="plus" size={20} />
+        <button type="button" className="icon-btn" aria-label="Wallet" onClick={() => go("wallet")}>
+          <CoinMark size={22} />
         </button>
-        <h1>@{profile.handle}</h1>
-        <button type="button" className="icon-btn" aria-label="Activity" onClick={() => go("inbox")}>
+        <h1>{profile.name}</h1>
+        <button type="button" className="icon-btn" aria-label={`Activity${unread ? `, ${unread} new` : ""}`} onClick={() => go("inbox")}>
           <Icon name="comment" size={22} />
-          {unread > 0 && <em>{unread}</em>}
+          {unread > 0 && <em>{unread > 9 ? "9+" : unread}</em>}
         </button>
       </header>
 
-      <div className="profile-head">
-        <Avatar src={profile.avatar} name={profile.name} size={84} />
-        <div>
-          <h2>{profile.name}</h2>
-          <p className="note">{profile.bio || "Add a short bio."}</p>
+      <div className="me-head">
+        <Avatar src={profile.avatar} name={profile.name} size={92} />
+        <span className="me-handle">@{profile.handle}</span>
+        <div className="stats">
+          <span>
+            <b className="num">{compact(following)}</b>
+            <span className="note">Following</span>
+          </span>
+          <span>
+            <b className="num">{compact(followers)}</b>
+            <span className="note">Followers</span>
+          </span>
+          <span>
+            <b className="num">{compact(likes)}</b>
+            <span className="note">Likes</span>
+          </span>
         </div>
+        <div className="row gap">
+          <button type="button" className="btn ghost" onClick={() => setEditing(true)}>
+            Edit profile
+          </button>
+          <button type="button" className="btn ghost" onClick={() => go("wallet")}>
+            <CoinMark size={16} /> {coinLabel(state.coins)}
+          </button>
+        </div>
+        {profile.bio ? (
+          <p className="bio">{profile.bio}</p>
+        ) : (
+          <button type="button" className="text-link" onClick={() => setEditing(true)}>
+            + Add a bio
+          </button>
+        )}
       </div>
 
-      {editing && <ProfileForm profile={profile} onSave={saveProfile} onDone={() => setEditing(false)} />}
-
-      <div className="stats">
-        <div>
-          <b className="num">{compact(following)}</b>
-          <span>Following</span>
-        </div>
-        <div>
-          <b className="num">{compact(followers)}</b>
-          <span>Followers</span>
-        </div>
-        <div>
-          <b className="num">{compact(state.orders.length)}</b>
-          <span>Orders</span>
-        </div>
-      </div>
-
-      <button type="button" className="coin-banner" onClick={() => go("wallet")}>
-        <CoinMark />
-        <span className="grow">
-          <b>{compact(state.coins)} coins</b>
-          <span className="note">Wallet, gifts, and checkout</span>
-        </span>
-        <Icon name="chevron" size={18} />
-      </button>
-
-      <div className="order-row">
+      <div className="me-shortcuts">
         <button type="button" onClick={() => go("orders")}>
-          <Icon name="bag" size={20} />
-          <span>{state.orders.length} orders</span>
-        </button>
-        <button type="button" onClick={() => openSheet({ type: "list" })}>
-          <Icon name="plus" size={20} />
-          <span>List</span>
-        </button>
-        <button type="button" onClick={() => openSheet({ type: "post" })}>
-          <Icon name="play" size={20} />
-          <span>Post</span>
+          <Icon name="box" size={20} />
+          <span>Orders</span>
         </button>
         <button type="button" onClick={() => go("studio")}>
           <Icon name="flash" size={20} />
           <span>Sales</span>
         </button>
+        <button type="button" onClick={() => go("inbox")}>
+          <Icon name="comment" size={20} />
+          <span>Activity</span>
+        </button>
+        <button type="button" onClick={() => openSheet({ type: "create" })}>
+          <Icon name="plus" size={20} />
+          <span>Create</span>
+        </button>
       </div>
 
-      <button type="button" className="studio-card" onClick={() => go("studio")}>
-        <span className="note">Sales today</span>
-        <strong className="num">{moneyExact(state.studio.today)}</strong>
-        <span>
-          {state.studio.orders} orders
-          {latest ? ` · ${latest.buyer} bought ${latest.item}` : ""}
-        </span>
-      </button>
-
-      <div className="tabs profile-tabs">
-        {["likes", "saved", "shelf"].map((item) => (
-          <button type="button" key={item} className={tab === item ? "on" : ""} onClick={() => setTab(item)}>
-            {item === "likes" ? "Likes" : item === "saved" ? "Saved" : "Shelf"}
+      <div className="me-tabs" role="tablist">
+        {TABS.map((item) => (
+          <button type="button" key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? "on" : ""} onClick={() => setTab(item.id)}>
+            {item.label}
           </button>
         ))}
       </div>
 
-      {tab === "shelf" ? (
-        <div className="grid-2 mosaic-pad">
-          {shelf.map((product) => (
-            <button type="button" key={product.id} className="pcard" onClick={() => go("product", product.id)}>
-              <span className="pcard-media">
-                <img src={product.image} alt="" referrerPolicy="no-referrer" />
-              </span>
-              <span className="clamp name">{product.name}</span>
-              <b>{moneyExact(product.price)}</b>
-            </button>
-          ))}
-          {shelf.length === 0 && <p className="note pad">Products you list, and products from people you follow, show up here.</p>}
-        </div>
+      {tab === "shop" ? (
+        <>
+          <div className="grid-2 mosaic-pad">
+            {listings.map((product) => (
+              <button type="button" key={product.id} className={cx("pcard", product.stock <= 0 && "sold-out")} onClick={() => go("product", product.id)}>
+                <span className="pcard-media">
+                  <img src={product.image} alt="" referrerPolicy="no-referrer" />
+                  {product.stock <= 0 && <em className="out">Sold out</em>}
+                </span>
+                <span className="clamp name">{product.name}</span>
+                <span className="price-row">
+                  <b>{money(product.price)}</b>
+                  <span className="note"> · {product.stock} left</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          {listings.length === 0 && (
+            <div className="empty small">
+              <p>Sell something and it shows up here.</p>
+              <button type="button" className="btn" onClick={() => openSheet({ type: "list" })}>
+                Sell a product
+              </button>
+            </div>
+          )}
+        </>
       ) : (
-        <div className="mosaic">
-          {(tab === "likes" ? liked : saved).map((clip) => (
-            <button type="button" key={clip.id} onClick={() => openSheet({ type: "comments", clipId: clip.id })}>
-              <img src={clip.image} alt="" referrerPolicy="no-referrer" />
-            </button>
-          ))}
-        </div>
-      )}
-      {tab !== "shelf" && (tab === "likes" ? liked : saved).length === 0 && (
-        <p className="note pad">{tab === "likes" ? "Likes land here." : "Saved clips land here."}</p>
+        <>
+          <div className="grid3">
+            {clips.map((clip) => (
+              <button type="button" key={clip.id} className="tile" onClick={() => go("feed", clip.id)} aria-label="Open post">
+                <Thumb src={clip.image} />
+                <span className="tile-count">
+                  <Icon name="heart" size={12} filled /> {compact(clip.likes)}
+                </span>
+              </button>
+            ))}
+          </div>
+          {clips.length === 0 && (
+            <div className="empty small">
+              <p>{tab === "posts" ? "Share your first post." : tab === "liked" ? "Posts you like show up here." : "Posts you save show up here."}</p>
+              {tab === "posts" && (
+                <button type="button" className="btn" onClick={() => openSheet({ type: "post" })}>
+                  Post
+                </button>
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      <button type="button" className="text-link" onClick={signOut}>
+      <button type="button" className="text-link danger-text" onClick={signOut}>
         Log out
       </button>
     </section>
@@ -139,28 +179,20 @@ export function Profile() {
 function ProfileForm({ profile, onSave, onDone }) {
   const [name, setName] = useState(profile.name);
   const [handle, setHandle] = useState(profile.handle);
-  const [bio, setBio] = useState(profile.bio);
-  const [avatar, setAvatar] = useState(profile.avatar);
+  const [bio, setBio] = useState(profile.bio || "");
+  const [avatar, setAvatar] = useState(profile.avatar || "");
+  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const onFile = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setBusy(true);
-    try {
-      setAvatar(await uploadMedia(file));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const nextHandle = cleanHandle(handle);
 
   return (
     <form
       className="auth-form pad"
       onSubmit={async (event) => {
         event.preventDefault();
-        const nextHandle = cleanHandle(handle);
+        if (!name.trim()) return setError("Enter your name");
+        if (!/^[a-z0-9_]{3,20}$/.test(nextHandle)) return setError("Username needs 3–20 letters, numbers or underscores");
+        setError("");
         setBusy(true);
         const ok = await onSave({
           display_name: name.trim(),
@@ -172,31 +204,45 @@ function ProfileForm({ profile, onSave, onDone }) {
         if (ok) onDone();
       }}
     >
-      <label>
-        Photo
-        <input type="file" accept="image/*" onChange={onFile} />
-      </label>
+      <div className="avatar-pick">
+        <MediaPicker label="Add photo" value={avatar} onChange={setAvatar} />
+      </div>
       <label>
         Name
         <input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} required />
       </label>
       <label>
-        Handle
-        <input value={handle} onChange={(event) => setHandle(event.target.value)} maxLength={20} required />
+        Username
+        <input
+          value={handle}
+          onChange={(event) => setHandle(event.target.value.toLowerCase())}
+          maxLength={20}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck="false"
+          required
+        />
+        {handle && nextHandle !== handle.trim().toLowerCase() && <span className="note">Will be saved as @{nextHandle}</span>}
       </label>
       <label>
         Bio
-        <textarea value={bio} onChange={(event) => setBio(event.target.value)} maxLength={160} />
+        <textarea value={bio} onChange={(event) => setBio(event.target.value)} maxLength={160} placeholder="Tell people what you sell or post" />
       </label>
-      <button type="submit" className="btn block" disabled={busy}>
-        {busy ? "Saving" : "Save profile"}
-      </button>
+      {error && <span className="auth-error">{error}</span>}
+      <div className="row gap">
+        <button type="button" className="btn ghost grow-btn" onClick={onDone} disabled={busy}>
+          Cancel
+        </button>
+        <button type="submit" className="btn grow-btn" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
     </form>
   );
 }
 
 export function Studio() {
-  const { state } = useStore();
+  const { state, openSheet } = useStore();
   const labels = weekLabels();
   const max = Math.max(...state.studio.week, 1);
   const avg = state.studio.orders ? state.studio.today / state.studio.orders : 0;
@@ -243,13 +289,20 @@ export function Studio() {
               <b>
                 {sale.buyer} bought {sale.item}
               </b>
-              <span className="note">{timeAgo(sale.at)}</span>
+              <span className="note">{timeAgo(sale.at)} ago</span>
             </span>
             <b>{moneyExact(sale.amount)}</b>
           </div>
         ))}
       </div>
-        {state.studio.recent.length === 0 && <p className="note pad">No sales yet.</p>}
+      {state.studio.recent.length === 0 && (
+        <div className="empty small">
+          <p>No sales yet. List a product or go LIVE to start selling.</p>
+          <button type="button" className="btn" onClick={() => openSheet({ type: "list" })}>
+            Sell a product
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -261,6 +314,7 @@ export function Orders() {
       <Header title="Orders" fallback="profile" />
       {state.orders.length === 0 && (
         <div className="empty">
+          <Icon name="box" size={36} />
           <p>No orders yet.</p>
           <button type="button" className="btn" onClick={() => go("shop")}>
             Browse the shop
@@ -282,6 +336,7 @@ export function Orders() {
                   className="list-row"
                   key={`${order.id}-${index}`}
                   onClick={() => listed && go("product", listed.id)}
+                  disabled={!listed}
                 >
                   {listed && <img src={listed.image} alt="" referrerPolicy="no-referrer" />}
                   <span className="grow">
@@ -312,7 +367,8 @@ export function Inbox() {
       <Header title="Activity" fallback="profile" />
       {state.notes.length === 0 && (
         <div className="empty">
-          <p>No activity yet.</p>
+          <Icon name="comment" size={36} />
+          <p>No activity yet. New followers, comments, gifts and sales show up here.</p>
         </div>
       )}
       <div className="pad-x">
@@ -322,7 +378,7 @@ export function Inbox() {
             key={note.id}
             className={cx("list-row note-row", !note.read && "unread")}
             onClick={() => {
-              markRead(note.id);
+              if (!note.read) markRead(note.id);
               if (note.view) go(note.view, note.param);
             }}
           >
@@ -357,7 +413,7 @@ export function OrderFlash() {
       <p className="price-row big">
         <b>{moneyExact(order.total)}</b>
       </p>
-      <p className="note">Saved to your account. You earned {order.bonus ?? 0} coins. Card payments aren't connected, so nothing was billed.</p>
+      <p className="note">You earned {order.bonus ?? 0} coins. No card was charged.</p>
       <button type="button" className="btn block" onClick={() => dismissFlash("orders")}>
         View orders
       </button>

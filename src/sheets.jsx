@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { GIFTS, LISTING_CATEGORIES } from "./config";
-import { coinLabel, compact, cx, money, moneyExact } from "./format";
+import { coinLabel, compact, cx, money, moneyExact, plural, timeAgo } from "./format";
 import { BoltMark, CoinMark, Icon } from "./icons";
-import { PhotoField } from "./live";
 import { useStore } from "./store";
-import { Avatar, FollowButton } from "./ui";
+import { Avatar, FollowButton, MediaPicker, Thumb } from "./ui";
 
 export function Sheets() {
   const { state, closeSheet } = useStore();
@@ -26,15 +25,19 @@ export function Sheets() {
     <>
       <button type="button" className="backdrop" aria-label="Close" onClick={closeSheet} />
       <div className={cx("sheet", tall && "tall")} role="dialog" aria-modal="true">
-        <div className="handle" />
+        <div className="grabber" />
+        <button type="button" className="sheet-close" aria-label="Close" onClick={closeSheet}>
+          <Icon name="close" size={20} />
+        </button>
         {sheet.type === "comments" && <CommentsSheet clipId={sheet.clipId} />}
         {sheet.type === "share" && <ShareSheet clipId={sheet.clipId} />}
+        {sheet.type === "clip-menu" && <ClipMenuSheet clipId={sheet.clipId} />}
         {sheet.type === "creator" && <CreatorSheet creatorId={sheet.creatorId} />}
         {sheet.type === "quick" && <QuickSheet productId={sheet.productId} />}
         {sheet.type === "cart" && <CartSheet />}
         {sheet.type === "checkout" && <CheckoutSheet />}
         {sheet.type === "gift" && <GiftSheet creatorId={sheet.creatorId} />}
-        {sheet.type === "bolt" && <BoltSheet />}
+        {(sheet.type === "create" || sheet.type === "bolt") && <CreateSheet />}
         {sheet.type === "list" && <ListSheet />}
         {sheet.type === "post" && <PostSheet />}
       </div>
@@ -46,44 +49,55 @@ function CommentsSheet({ clipId }) {
   const { state, addComment } = useStore();
   const clip = state.clips.find((item) => item.id === clipId);
   const [text, setText] = useState("");
-  const comments = state.comments[clipId] ?? [];
+  const [busy, setBusy] = useState(false);
+  const comments = state.comments[clipId];
   if (!clip) return null;
 
   return (
     <>
-      <div className="sheet-head">
-        <h2>{compact(comments.length)} comments</h2>
+      <div className="sheet-head center">
+        <h2>{plural(clip.comments, "comment")}</h2>
       </div>
       <div className="sheet-body">
-        {comments.length === 0 && <p className="note">No comments yet.</p>}
-        {comments.map((comment) => (
-          <div className="comment" key={comment.id || `${comment.user}-${comment.text}`}>
-            <span className="avatar-fallback sm">{comment.user.slice(0, 1).toUpperCase()}</span>
+        {!comments && <p className="note center-text">Loading…</p>}
+        {comments?.length === 0 && (
+          <div className="empty small">
+            <Icon name="comment" size={30} />
+            <p>No comments yet. Start the conversation.</p>
+          </div>
+        )}
+        {comments?.map((comment) => (
+          <div className="comment" key={comment.id}>
+            <Avatar src={comment.avatar} name={comment.user} size={34} />
             <span className="grow">
               <b>{comment.user}</b>
               <p>{comment.text}</p>
+              {comment.at ? <span className="note">{timeAgo(comment.at)} ago</span> : null}
             </span>
           </div>
         ))}
       </div>
       <form
         className="composer"
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
-          addComment(clipId, text);
-          setText("");
+          if (busy || !text.trim()) return;
+          setBusy(true);
+          const ok = await addComment(clipId, text);
+          setBusy(false);
+          if (ok) setText("");
         }}
       >
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="Add a comment"
+          placeholder="Add a comment…"
           aria-label="Add a comment"
           maxLength={180}
           enterKeyHint="send"
         />
-        <button type="submit" className="btn slim" disabled={!text.trim()}>
-          Post
+        <button type="submit" className={cx("btn slim", !text.trim() && "dim")} disabled={busy}>
+          {busy ? "…" : "Post"}
         </button>
       </form>
     </>
@@ -91,68 +105,162 @@ function CommentsSheet({ clipId }) {
 }
 
 function ShareSheet({ clipId }) {
-  const { share } = useStore();
+  const { state, share } = useStore();
+  const [manual, setManual] = useState("");
+  const canShare = typeof navigator !== "undefined" && !!navigator.share;
+  const run = async (method) => {
+    const result = await share(clipId, method);
+    if (result?.manual) setManual(result.manual);
+  };
+
+  if (manual) {
+    return (
+      <>
+        <div className="sheet-head center">
+          <h2>Copy this link</h2>
+        </div>
+        <div className="sheet-body auth-form">
+          <input value={manual} readOnly aria-label="Post link" onFocus={(event) => event.target.select()} autoFocus />
+          <p className="note center-text">Your browser blocked copying. Select the link and copy it.</p>
+        </div>
+      </>
+    );
+  }
   return (
     <>
-      <div className="sheet-head">
-        <h2>Share</h2>
+      <div className="sheet-head center">
+        <h2>Share to</h2>
+      </div>
+      <div className="sheet-body share-grid">
+        {canShare && (
+          <button type="button" className="share-tile" onClick={() => run("native")}>
+            <span className="share-icon">
+              <Icon name="share" size={24} />
+            </span>
+            Share to…
+          </button>
+        )}
+        <button type="button" className="share-tile" onClick={() => run("copy")}>
+          <span className="share-icon alt">
+            <Icon name="check" size={24} />
+          </span>
+          Copy link
+        </button>
+      </div>
+      {!state.earned.share && <p className="note center-text sheet-foot">Share a post to earn 5 coins.</p>}
+    </>
+  );
+}
+
+function ClipMenuSheet({ clipId }) {
+  const { openSheet, removeClip } = useStore();
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  return (
+    <>
+      <div className="sheet-head center">
+        <h2>{confirm ? "Delete this post?" : "Your post"}</h2>
       </div>
       <div className="sheet-body">
-        <button type="button" className="list-row" onClick={() => share(clipId)}>
-          <Icon name="share" size={20} />
-          <span className="grow">
-            <b>Copy link</b>
-            <span className="note">Copy a link to Speedy</span>
-          </span>
-        </button>
+        {confirm ? (
+          <>
+            <p className="note center-text">This can't be undone.</p>
+            <div className="row gap">
+              <button type="button" className="btn ghost grow-btn" onClick={() => setConfirm(false)} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn danger grow-btn"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  const ok = await removeClip(clipId);
+                  if (!ok) setBusy(false);
+                }}
+              >
+                {busy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="list-row" onClick={() => openSheet({ type: "share", clipId })}>
+              <Icon name="share" size={20} />
+              <span className="grow">
+                <b>Share</b>
+              </span>
+            </button>
+            <button type="button" className="list-row danger-text" onClick={() => setConfirm(true)}>
+              <Icon name="trash" size={20} />
+              <span className="grow">
+                <b>Delete post</b>
+              </span>
+            </button>
+          </>
+        )}
       </div>
     </>
   );
 }
 
 function CreatorSheet({ creatorId }) {
-  const { state, go, closeSheet, person, isLive, liveFor } = useStore();
+  const { state, go, person, isLive, liveFor } = useStore();
   const creator = person(creatorId);
   if (!creator) return null;
   const clips = state.clips.filter((clip) => clip.creatorId === creatorId);
   const products = state.products.filter((product) => product.creatorId === creatorId);
   const live = liveFor(creatorId);
   const mine = state.profile?.id === creator.id;
+  const likes = clips.reduce((sum, clip) => sum + clip.likes, 0);
 
   return (
     <>
-      <div className="sheet-head">
-        <h2>{creator.name}</h2>
-        {!mine && <FollowButton id={creator.id} />}
-      </div>
-      <div className="sheet-body">
+      <div className="sheet-body creator-sheet">
         <div className="creator-top">
-          <Avatar src={creator.avatar} name={creator.name} size={64} ring={isLive(creator.id)} />
-          <div>
-            <b>@{creator.handle}</b>
-            <p className="note">{creator.bio}</p>
-            <p className="note">{compact(creator.followers)} followers</p>
+          <Avatar src={creator.avatar} name={creator.name} size={76} ring={isLive(creator.id)} />
+          <h2>{creator.name}</h2>
+          <span className="note">@{creator.handle}</span>
+          <div className="stats">
+            <span>
+              <b className="num">{compact(clips.length)}</b>
+              <span className="note">Posts</span>
+            </span>
+            <span>
+              <b className="num">{compact(creator.followers)}</b>
+              <span className="note">Followers</span>
+            </span>
+            <span>
+              <b className="num">{compact(likes)}</b>
+              <span className="note">Likes</span>
+            </span>
+          </div>
+          {creator.bio && <p className="bio">{creator.bio}</p>}
+          <div className="row gap">
+            {mine ? (
+              <button type="button" className="btn ghost" onClick={() => go("profile")}>
+                View your profile
+              </button>
+            ) : (
+              <FollowButton id={creator.id} />
+            )}
+            {live && (
+              <button type="button" className="btn live-btn" onClick={() => go("room", live.id)}>
+                Watch LIVE · {compact(live.viewers)}
+              </button>
+            )}
           </div>
         </div>
-        {live && (
-          <button
-            type="button"
-            className="btn block"
-            onClick={() => {
-              closeSheet();
-              go("room", live.id);
-            }}
-          >
-            Watch live · {compact(live.viewers)}
-          </button>
-        )}
         {clips.length > 0 && (
           <>
-            <h3>Clips</h3>
-            <div className="hscroll">
+            <h3>Posts</h3>
+            <div className="grid3">
               {clips.map((clip) => (
-                <button type="button" key={clip.id} onClick={() => clip.productId && go("product", clip.productId)}>
-                  <img src={clip.image} alt="" referrerPolicy="no-referrer" />
+                <button type="button" key={clip.id} className="tile" onClick={() => go("feed", clip.id)} aria-label="Open post">
+                  <Thumb src={clip.image} />
+                  <span className="tile-count">
+                    <Icon name="heart" size={12} filled /> {compact(clip.likes)}
+                  </span>
                 </button>
               ))}
             </div>
@@ -160,89 +268,106 @@ function CreatorSheet({ creatorId }) {
         )}
         {products.length > 0 && <h3>Shop</h3>}
         {products.map((product) => (
-          <button
-            type="button"
-            key={product.id}
-            className="list-row"
-            onClick={() => {
-              closeSheet();
-              go("product", product.id);
-            }}
-          >
+          <button type="button" key={product.id} className="list-row" onClick={() => go("product", product.id)}>
             <img src={product.image} alt="" referrerPolicy="no-referrer" />
             <span className="grow">
               <b>{product.name}</b>
-              <span className="note">{compact(product.sold)} sold</span>
+              <span className="note">{product.stock > 0 ? `${compact(product.sold)} sold` : "Sold out"}</span>
             </span>
             <b>{money(product.price)}</b>
           </button>
         ))}
+        {clips.length === 0 && products.length === 0 && <p className="note center-text">No posts yet.</p>}
       </div>
     </>
   );
 }
 
 function QuickSheet({ productId }) {
-  const { state, addToCart, openSheet, pushToast, product: findProduct } = useStore();
+  const { state, go, addToCart, openSheet, pushToast, product: findProduct } = useStore();
   const product = findProduct(productId);
   const [size, setSize] = useState(null);
   const [shake, setShake] = useState(false);
-  if (!product) return null;
+  const [busy, setBusy] = useState(false);
+  if (!product) {
+    return (
+      <div className="sheet-body empty small">
+        <p>This product isn't available anymore.</p>
+      </div>
+    );
+  }
+  const soldOut = product.stock <= 0;
+  const mine = product.creatorId === state.profile?.id;
 
-  const commit = (buyNow) => {
+  const commit = async (buyNow) => {
     if (product.sizes?.length && !size) {
       setShake(true);
       setTimeout(() => setShake(false), 420);
       pushToast("Pick a size");
       return;
     }
-    addToCart(product.id, size, 1, { quiet: buyNow });
-    if (buyNow) openSheet({ type: "checkout", liveId: state.sheet?.liveId || null });
+    setBusy(true);
+    const ok = await addToCart(product.id, size, 1, { quiet: buyNow });
+    setBusy(false);
+    if (ok && buyNow) openSheet({ type: "checkout", liveId: state.sheet?.liveId || null });
   };
 
   return (
-    <>
-      <div className="sheet-body">
-        <div className="quick">
-          <img src={product.image} alt="" referrerPolicy="no-referrer" />
-          <div>
-            <span className="brand">{product.brand}</span>
-            <h2>{product.name}</h2>
-            <p className="price-row">
-              <b>{money(product.price)}</b>
-              {product.was && <s className="was">{money(product.was)}</s>}
-            </p>
-            <p className="note">{product.description}</p>
+    <div className="sheet-body">
+      <div className="quick">
+        <img src={product.image} alt="" referrerPolicy="no-referrer" />
+        <div>
+          <span className="brand">{product.brand}</span>
+          <h2>{product.name}</h2>
+          <p className="price-row">
+            <b>{money(product.price)}</b>
+            {product.was && <s className="was">{money(product.was)}</s>}
+          </p>
+          <p className="note">{soldOut ? "Sold out" : product.stock <= 5 ? `Only ${product.stock} left` : `${product.stock} in stock`}</p>
+        </div>
+      </div>
+      {product.description && <p className="note">{product.description}</p>}
+      {product.sizes?.length > 0 && !soldOut && (
+        <div className={cx("size-block", shake && "shake")}>
+          <span className="note">Size</span>
+          <div className="chips">
+            {product.sizes.map((item) => (
+              <button type="button" key={item} className={cx("chip", size === item && "on")} onClick={() => setSize(item)}>
+                {item}
+              </button>
+            ))}
           </div>
         </div>
-        {product.sizes?.length > 0 && (
-          <div className={cx("size-block", shake && "shake")}>
-            <span className="note">Size</span>
-            <div className="chips">
-              {product.sizes.map((item) => (
-                <button type="button" key={item} className={cx("chip", size === item && "on")} onClick={() => setSize(item)}>
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+      )}
+      {mine ? (
+        <button type="button" className="btn ghost block" onClick={() => go("product", product.id)}>
+          This is your listing · View
+        </button>
+      ) : soldOut ? (
+        <button type="button" className="btn block" disabled>
+          Sold out
+        </button>
+      ) : (
         <div className="row gap">
-          <button type="button" className="btn ghost grow-btn" onClick={() => commit(false)}>
+          <button type="button" className="btn ghost grow-btn" onClick={() => commit(false)} disabled={busy}>
             Add to bag
           </button>
-          <button type="button" className="btn grow-btn" onClick={() => commit(true)}>
+          <button type="button" className="btn grow-btn" onClick={() => commit(true)} disabled={busy}>
             Buy now
           </button>
         </div>
-      </div>
-    </>
+      )}
+      <button type="button" className="text-link" onClick={() => go("product", product.id)}>
+        See full details
+      </button>
+    </div>
   );
 }
 
 function CartSheet() {
-  const { state, changeQty, openSheet, closeSheet, go, product: findProduct } = useStore();
+  const { state, changeQty, openSheet, go, product: findProduct } = useStore();
   const lines = state.cart.filter((line) => findProduct(line.productId));
+  const count = lines.reduce((sum, line) => sum + line.qty, 0);
   const subtotal = lines.reduce((sum, line) => sum + findProduct(line.productId).price * line.qty, 0);
 
   if (!lines.length) {
@@ -250,14 +375,7 @@ function CartSheet() {
       <div className="sheet-body empty">
         <Icon name="bag" size={32} />
         <p>Your bag is empty.</p>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            closeSheet();
-            go("shop");
-          }}
-        >
+        <button type="button" className="btn" onClick={() => go("shop")}>
           Browse shop
         </button>
       </div>
@@ -267,7 +385,7 @@ function CartSheet() {
   return (
     <>
       <div className="sheet-head">
-        <h2>Bag</h2>
+        <h2>Bag · {plural(count, "item")}</h2>
       </div>
       <div className="sheet-body">
         {lines.map((line) => {
@@ -279,11 +397,11 @@ function CartSheet() {
                 <b>{product.name}</b>
                 <span className="note">{line.size ? `Size ${line.size}` : product.brand}</span>
                 <span className="stepper">
-                  <button type="button" aria-label="Decrease" onClick={() => changeQty(line.id, -1)}>
-                    −
+                  <button type="button" aria-label={line.qty === 1 ? "Remove" : "Decrease"} onClick={() => changeQty(line.id, -1)}>
+                    {line.qty === 1 ? <Icon name="trash" size={14} /> : "−"}
                   </button>
                   <span className="num">{line.qty}</span>
-                  <button type="button" aria-label="Increase" onClick={() => changeQty(line.id, 1)}>
+                  <button type="button" aria-label="Increase" onClick={() => changeQty(line.id, 1)} disabled={line.qty >= product.stock}>
                     +
                   </button>
                 </span>
@@ -305,12 +423,15 @@ function CartSheet() {
 }
 
 function CheckoutSheet() {
-  const { state, setAddress, addAddress, checkout, product: findProduct } = useStore();
+  const { state, setAddress, addAddress, checkout, openSheet, product: findProduct } = useStore();
   const [useCoins, setUseCoins] = useState(true);
+  const [adding, setAdding] = useState(state.addresses.length === 0);
   const [label, setLabel] = useState("Home");
   const [line, setLine] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const lines = state.cart.filter((item) => findProduct(item.productId));
-  const address = state.addresses.find((item) => item.id === state.addressId) ?? state.addresses[0] ?? null;
+  const address = state.addresses.find((item) => item.id === state.addressId) ?? null;
   const subtotal = lines.reduce((sum, item) => sum + findProduct(item.productId).price * item.qty, 0);
   const maxCoins = Math.min(state.coins, Math.floor(subtotal * 30));
   const applied = useCoins ? maxCoins : 0;
@@ -319,71 +440,114 @@ function CheckoutSheet() {
 
   if (!lines.length) {
     return (
-      <div className="sheet-body">
+      <div className="sheet-body empty small">
         <p>Your bag is empty.</p>
       </div>
     );
   }
 
+  const saveAddress = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    const saved = await addAddress(label, line);
+    setSaving(false);
+    if (saved) {
+      setLabel("Home");
+      setLine("");
+      setAdding(false);
+    }
+  };
+
+  const place = async () => {
+    setBusy(true);
+    const ok = await checkout({
+      total,
+      spentCoins: applied,
+      bonus,
+      liveId: state.sheet?.liveId || null,
+      lines: lines.map((item) => ({
+        productId: item.productId,
+        size: item.size,
+        qty: item.qty,
+        price: findProduct(item.productId).price,
+      })),
+    });
+    if (!ok) setBusy(false);
+  };
+
   return (
     <>
       <div className="sheet-head">
+        <button type="button" className="icon-btn" aria-label="Back to bag" onClick={() => openSheet({ type: "cart", liveId: state.sheet?.liveId || null })}>
+          <Icon name="back" size={22} />
+        </button>
         <h2>Checkout</h2>
       </div>
       <div className="sheet-body">
-        {lines.map((line) => {
-          const product = findProduct(line.productId);
+        {lines.map((item) => {
+          const product = findProduct(item.productId);
           return (
-            <div className="list-row static" key={line.id}>
+            <div className="list-row static" key={item.id}>
               <img src={product.image} alt="" referrerPolicy="no-referrer" />
               <span className="grow">
                 <b>{product.name}</b>
                 <span className="note">
-                  {line.size ? `Size ${line.size} · ` : ""}Qty {line.qty}
+                  {item.size ? `Size ${item.size} · ` : ""}Qty {item.qty}
                 </span>
               </span>
-              <b>{money(product.price * line.qty)}</b>
+              <b>{money(product.price * item.qty)}</b>
             </div>
           );
         })}
-        <div className="chips">
-          {state.addresses.map((item) => (
-            <button type="button" key={item.id} className={cx("chip", address?.id === item.id && "on")} onClick={() => setAddress(item.id)}>
-              {item.label}
-            </button>
-          ))}
-        </div>
-        {address ? (
-          <p className="note">
-            {address.label} · {address.line}
-          </p>
-        ) : (
-          <p className="note">Add a delivery address before you place the order.</p>
+
+        <h3>Deliver to</h3>
+        {state.addresses.length > 0 && (
+          <div className="address-list">
+            {state.addresses.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className={cx("address", address?.id === item.id && "on")}
+                onClick={() => setAddress(item.id)}
+                aria-pressed={address?.id === item.id}
+              >
+                <span className="radio" />
+                <span className="grow">
+                  <b>{item.label}</b>
+                  <span className="note">{item.line}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         )}
-        <form
-          className="auth-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const saved = await addAddress(label, line);
-            if (saved) {
-              setLabel("Home");
-              setLine("");
-            }
-          }}
-        >
-          <label>
-            Address label
-            <input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={40} required />
-          </label>
-          <label>
-            Street
-            <input value={line} onChange={(event) => setLine(event.target.value)} maxLength={160} required />
-          </label>
-          <button type="submit" className="btn ghost block">
-            Save address
+        {adding ? (
+          <form className="auth-form address-form" onSubmit={saveAddress}>
+            <input value={line} onChange={(event) => setLine(event.target.value)} maxLength={160} placeholder="Street, city, postcode" aria-label="Street address" required autoFocus />
+            <div className="chips">
+              {["Home", "Work", "Other"].map((item) => (
+                <button type="button" key={item} className={cx("chip", label === item && "on")} onClick={() => setLabel(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
+            <div className="row gap">
+              {state.addresses.length > 0 && (
+                <button type="button" className="btn ghost grow-btn" onClick={() => setAdding(false)}>
+                  Cancel
+                </button>
+              )}
+              <button type="submit" className="btn grow-btn" disabled={saving || !line.trim()}>
+                {saving ? "Saving…" : "Save address"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button type="button" className="text-link" onClick={() => setAdding(true)}>
+            + Add a new address
           </button>
-        </form>
-        {maxCoins > 0 ? (
+        )}
+
+        {maxCoins > 0 && (
           <button type="button" className="coin-toggle" onClick={() => setUseCoins((value) => !value)} aria-pressed={useCoins}>
             <span>
               Use {coinLabel(maxCoins)} coins
@@ -393,8 +557,6 @@ function CheckoutSheet() {
               <i />
             </span>
           </button>
-        ) : (
-          <p className="note">No coins to apply.</p>
         )}
         <div className="total-row">
           <span>Subtotal</span>
@@ -410,27 +572,9 @@ function CheckoutSheet() {
           <span>Total</span>
           <b>{moneyExact(total)}</b>
         </div>
-        <p className="note">You'll earn {bonus} coins. Card payments aren't connected, so this saves the order without billing a card.</p>
-        <button
-          type="button"
-          className="btn block"
-          disabled={!address}
-          onClick={() =>
-            checkout({
-              total,
-              spentCoins: applied,
-              bonus,
-              liveId: state.sheet?.liveId || null,
-              lines: lines.map((item) => ({
-                productId: item.productId,
-                size: item.size,
-                qty: item.qty,
-                price: findProduct(item.productId).price,
-              })),
-            })
-          }
-        >
-          Place order · {moneyExact(total)}
+        <p className="note">You'll earn {bonus} coins. Card payments aren't connected yet, so no card is charged.</p>
+        <button type="button" className="btn block" disabled={!address || busy} onClick={place}>
+          {busy ? "Placing order…" : address ? `Place order · ${moneyExact(total)}` : "Add an address to continue"}
         </button>
       </div>
     </>
@@ -438,15 +582,15 @@ function CheckoutSheet() {
 }
 
 function GiftSheet({ creatorId }) {
-  const { state, sendGift, person } = useStore();
+  const { state, sendGift, person, go } = useStore();
   const creator = person(creatorId);
   return (
     <>
       <div className="sheet-head">
         <h2>Gift {creator?.name}</h2>
-        <span className="coin-pill static">
+        <button type="button" className="coin-pill static" onClick={() => go("wallet")}>
           <CoinMark size={14} /> {coinLabel(state.coins)}
-        </span>
+        </button>
       </div>
       <div className="sheet-body gift-grid">
         {GIFTS.map((gift) => (
@@ -457,51 +601,47 @@ function GiftSheet({ creatorId }) {
           </button>
         ))}
       </div>
+      {GIFTS.some((gift) => state.coins < gift.coins) && (
+        <button type="button" className="text-link sheet-foot" onClick={() => go("wallet")}>
+          Get more coins
+        </button>
+      )}
     </>
   );
 }
 
-function BoltSheet() {
-  const { state, go, closeSheet, openSheet } = useStore();
-  const bag = state.cart.reduce((sum, line) => sum + line.qty, 0);
-  const jump = (view) => {
-    closeSheet();
-    go(view);
-  };
+function CreateSheet() {
+  const { state, go, openSheet } = useStore();
   return (
     <>
-      <div className="sheet-body bolt-sheet">
-        <BoltMark size={42} />
-        <h2 className="wordmark">Speedy</h2>
-        <button type="button" className="coin-pill static" onClick={() => jump("wallet")}>
-          <CoinMark size={16} />
-          <b className="num">{coinLabel(state.coins)}</b>
-        </button>
-        <button type="button" className="list-row" onClick={() => openSheet({ type: "list" })}>
-          <Icon name="plus" size={20} />
-          <span className="grow">
-            <b>List a product</b>
-            <span className="note">It shows up in the shop</span>
-          </span>
-          <Icon name="chevron" size={18} />
-        </button>
-        <button type="button" className="list-row" onClick={() => openSheet({ type: "post" })}>
-          <Icon name="play" size={20} />
-          <span className="grow">
-            <b>Post a clip</b>
-            <span className="note">It shows up on the feed</span>
-          </span>
-          <Icon name="chevron" size={18} />
-        </button>
-        <button type="button" className="list-row" onClick={() => jump("broadcast")}>
-          <Icon name="live" size={20} />
-          <span className="grow">
-            <b>Go live</b>
-            <span className="note">Sell from your own products</span>
-          </span>
-          <Icon name="chevron" size={18} />
-        </button>
-        <button type="button" className="list-row" onClick={() => jump("studio")}>
+      <div className="sheet-head center">
+        <h2>Create</h2>
+      </div>
+      <div className="sheet-body">
+        <div className="create-grid">
+          <button type="button" className="create-tile" onClick={() => openSheet({ type: "post" })}>
+            <span className="create-icon">
+              <Icon name="play" size={24} />
+            </span>
+            <b>Post</b>
+            <span className="note">Photo or video</span>
+          </button>
+          <button type="button" className="create-tile" onClick={() => openSheet({ type: "list" })}>
+            <span className="create-icon alt">
+              <Icon name="bag" size={24} />
+            </span>
+            <b>Sell</b>
+            <span className="note">List a product</span>
+          </button>
+          <button type="button" className="create-tile" onClick={() => go("broadcast")}>
+            <span className="create-icon live">
+              <Icon name="live" size={24} />
+            </span>
+            <b>Go LIVE</b>
+            <span className="note">Sell live</span>
+          </button>
+        </div>
+        <button type="button" className="list-row" onClick={() => go("studio")}>
           <Icon name="flash" size={20} filled />
           <span className="grow">
             <b>Sales</b>
@@ -509,81 +649,53 @@ function BoltSheet() {
           </span>
           <Icon name="chevron" size={18} />
         </button>
-        <button type="button" className="list-row" onClick={() => jump("wallet")}>
+        <button type="button" className="list-row" onClick={() => go("wallet")}>
           <CoinMark size={20} />
           <span className="grow">
             <b>Wallet</b>
-            <span className="note">Coins you earn</span>
+            <span className="note">{coinLabel(state.coins)} coins</span>
           </span>
           <Icon name="chevron" size={18} />
         </button>
-        <button type="button" className="list-row" onClick={() => jump("shop")}>
-          <Icon name="bag" size={20} />
-          <span className="grow">
-            <b>Shop</b>
-            <span className="note">Products people have listed</span>
-          </span>
-          <Icon name="chevron" size={18} />
-        </button>
-        {bag > 0 && (
-          <button type="button" className="list-row" onClick={() => openSheet({ type: "cart" })}>
-            <Icon name="bag" size={20} />
-            <span className="grow">
-              <b>Your bag</b>
-              <span className="note">{bag} ready to check out</span>
-            </span>
-            <Icon name="chevron" size={18} />
-          </button>
-        )}
       </div>
     </>
   );
 }
 
 function ListSheet() {
-  const { closeSheet, publishProduct, pushToast } = useStore();
+  const { go, publishProduct, pushToast } = useStore();
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
-  const [compareAt, setCompareAt] = useState("");
   const [stock, setStock] = useState("1");
   const [category, setCategory] = useState(LISTING_CATEGORIES[0]);
-  const [sizes, setSizes] = useState("");
   const [description, setDescription] = useState("");
   const [image, setImage] = useState("");
+  const [more, setMore] = useState(false);
+  const [compareAt, setCompareAt] = useState("");
+  const [sizes, setSizes] = useState("");
   const [flash, setFlash] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
-    const amount = Number(price);
-    const was = compareAt.trim() ? Number(compareAt) : null;
+    const amount = Number(price.replace(/[$,\s]/g, ""));
+    const was = compareAt.trim() ? Number(compareAt.replace(/[$,\s]/g, "")) : null;
     const qty = Number(stock);
     const parsedSizes = sizes
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
-    if (!image) {
-      pushToast("Add a photo");
-      return;
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      pushToast("Enter a price");
-      return;
-    }
-    if (!Number.isInteger(qty) || qty < 1) {
-      pushToast("Enter stock of at least 1");
-      return;
-    }
-    if (was != null && (!(was > amount))) {
-      pushToast("Compare-at price has to be higher than the price");
-      return;
-    }
+    if (!image) return pushToast("Add a photo first");
+    if (!name.trim()) return pushToast("Give your product a name");
+    if (!Number.isFinite(amount) || amount <= 0) return pushToast("Enter a price, like 25");
+    if (!Number.isInteger(qty) || qty < 1) return pushToast("Stock has to be at least 1");
+    if (was != null && !(was > amount)) return pushToast("Original price has to be higher than the price");
     setBusy(true);
     try {
-      await publishProduct({
+      const id = await publishProduct({
         name: name.trim(),
         description: description.trim(),
-        price: amount,
+        price: Math.round(amount * 100) / 100,
         compareAt: was,
         stock: qty,
         category,
@@ -591,10 +703,9 @@ function ListSheet() {
         sizes: parsedSizes.length ? parsedSizes : null,
         imageUrl: image,
       });
-      closeSheet();
+      go("product", id);
     } catch (error) {
       pushToast(error.message);
-    } finally {
       setBusy(false);
     }
   };
@@ -602,49 +713,64 @@ function ListSheet() {
   return (
     <>
       <div className="sheet-head">
-        <h2>List a product</h2>
+        <h2>Sell a product</h2>
       </div>
       <form className="sheet-body auth-form" onSubmit={submit}>
-        <PhotoField label="Photo" value={image} onChange={setImage} />
+        <MediaPicker label="Add photo" hint="Clear, bright photos sell faster" value={image} onChange={setImage} />
         <label>
           Name
-          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required />
+          <input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="What are you selling?" required />
         </label>
-        <label>
-          Price
-          <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" required />
-        </label>
-        <label>
-          Compare-at price
-          <input value={compareAt} onChange={(event) => setCompareAt(event.target.value)} inputMode="decimal" />
-        </label>
-        <label>
-          Stock
-          <input value={stock} onChange={(event) => setStock(event.target.value)} inputMode="numeric" required />
-        </label>
-        <label>
-          Category
-          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+        <div className="row gap">
+          <label className="grow">
+            Price ($)
+            <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" placeholder="25" required />
+          </label>
+          <label className="grow">
+            Stock
+            <input value={stock} onChange={(event) => setStock(event.target.value.replace(/\D/g, ""))} inputMode="numeric" required />
+          </label>
+        </div>
+        <div className="field">
+          <span className="field-label">Category</span>
+          <div className="chips">
             {LISTING_CATEGORIES.map((item) => (
-              <option key={item} value={item}>
+              <button type="button" key={item} className={cx("chip", category === item && "on")} onClick={() => setCategory(item)}>
                 {item}
-              </option>
+              </button>
             ))}
-          </select>
-        </label>
-        <label>
-          Sizes
-          <input value={sizes} onChange={(event) => setSizes(event.target.value)} placeholder="S, M, L" />
-        </label>
+          </div>
+        </div>
         <label>
           Description
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} />
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} placeholder="Condition, material, fit…" />
         </label>
-        <button type="button" className={cx("chip", flash && "on")} onClick={() => setFlash((value) => !value)}>
-          {flash ? "Flash listing" : "Mark as flash"}
+        <button type="button" className="text-link" onClick={() => setMore((value) => !value)} aria-expanded={more}>
+          {more ? "Hide extra options" : "More options (sale price, sizes)"}
         </button>
+        {more && (
+          <>
+            <label>
+              Original price ($) — shows as a discount
+              <input value={compareAt} onChange={(event) => setCompareAt(event.target.value)} inputMode="decimal" placeholder="Optional" />
+            </label>
+            <label>
+              Sizes — separate with commas
+              <input value={sizes} onChange={(event) => setSizes(event.target.value)} placeholder="S, M, L" />
+            </label>
+            <button type="button" className="coin-toggle" onClick={() => setFlash((value) => !value)} aria-pressed={flash}>
+              <span>
+                Flash deal
+                <span className="note">Shows in the Flash section of the shop</span>
+              </span>
+              <span className={cx("switch", flash && "on")}>
+                <i />
+              </span>
+            </button>
+          </>
+        )}
         <button type="submit" className="btn block" disabled={busy}>
-          {busy ? "Listing" : "List product"}
+          {busy ? "Listing…" : "List product"}
         </button>
       </form>
     </>
@@ -652,7 +778,7 @@ function ListSheet() {
 }
 
 function PostSheet() {
-  const { state, closeSheet, publishClip, pushToast } = useStore();
+  const { state, go, publishClip, pushToast, openSheet } = useStore();
   const [caption, setCaption] = useState("");
   const [image, setImage] = useState("");
   const [productId, setProductId] = useState("");
@@ -661,17 +787,14 @@ function PostSheet() {
 
   const submit = async (event) => {
     event.preventDefault();
-    if (!image) {
-      pushToast("Add a photo");
-      return;
-    }
+    if (!image) return pushToast("Add a photo or video first");
+    if (!caption.trim()) return pushToast("Write a caption");
     setBusy(true);
     try {
-      await publishClip({ caption: caption.trim(), imageUrl: image, productId: productId || null });
-      closeSheet();
+      const id = await publishClip({ caption: caption.trim(), imageUrl: image, productId: productId || null });
+      go("feed", id);
     } catch (error) {
       pushToast(error.message);
-    } finally {
       setBusy(false);
     }
   };
@@ -679,27 +802,35 @@ function PostSheet() {
   return (
     <>
       <div className="sheet-head">
-        <h2>Post a clip</h2>
+        <h2>New post</h2>
       </div>
       <form className="sheet-body auth-form" onSubmit={submit}>
-        <PhotoField label="Photo" value={image} onChange={setImage} />
+        <MediaPicker label="Add photo or video" hint="Videos up to 50 MB" value={image} onChange={setImage} video />
         <label>
           Caption
-          <textarea value={caption} onChange={(event) => setCaption(event.target.value)} maxLength={300} required />
+          <textarea value={caption} onChange={(event) => setCaption(event.target.value)} maxLength={300} placeholder="Describe your post… #hashtags" />
         </label>
-        <label>
-          Product
-          <select value={productId} onChange={(event) => setProductId(event.target.value)}>
-            <option value="">None</option>
-            {mine.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="field">
+          <span className="field-label">Tag a product</span>
+          {mine.length > 0 ? (
+            <div className="chips">
+              <button type="button" className={cx("chip", !productId && "on")} onClick={() => setProductId("")}>
+                None
+              </button>
+              {mine.map((product) => (
+                <button type="button" key={product.id} className={cx("chip", productId === product.id && "on")} onClick={() => setProductId(product.id)}>
+                  {product.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button type="button" className="text-link" onClick={() => openSheet({ type: "list" })}>
+              List a product to tag it in posts
+            </button>
+          )}
+        </div>
         <button type="submit" className="btn block" disabled={busy}>
-          {busy ? "Posting" : "Post"}
+          {busy ? "Posting…" : "Post"}
         </button>
       </form>
     </>

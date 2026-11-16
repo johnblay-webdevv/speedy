@@ -394,8 +394,8 @@ begin
     return new;
   end if;
   select display_name into v_name from public.profiles where id = new.user_id;
-  insert into public.notifications (user_id, title, body, view)
-  values (v_owner, 'New comment', coalesce(v_name, 'Someone') || ' commented on your clip', 'feed');
+  insert into public.notifications (user_id, title, body, view, param)
+  values (v_owner, 'New comment', coalesce(v_name, 'Someone') || ' commented on your post', 'feed', new.clip_id::text);
   return new;
 end;
 $$;
@@ -759,10 +759,12 @@ begin
         'cover', lv.cover_url,
         'productIds', to_jsonb(lv.product_ids),
         'sold', lv.sold_count,
+        'startedAt', lv.started_at,
         'viewers', (select count(*) from public.live_viewers v where v.live_id = lv.id)
       ) order by lv.started_at desc)
       from public.lives lv
       where lv.ended_at is null
+        and lv.started_at > now() - interval '12 hours'
     ), '[]'::jsonb)
   ) into result;
 

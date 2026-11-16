@@ -181,12 +181,84 @@ export function Icon({ name, size = 24, filled = false }) {
           <path d="m8.4 12.2 2.4 2.4 4.8-5.2" />
         </svg>
       );
+    case "sound":
+      return (
+        <svg {...props}>
+          <path d="M4 9.5h3.2L12 5.6v12.8l-4.8-3.9H4z" />
+          <path d="M15.5 9a4.2 4.2 0 0 1 0 6" />
+          <path d="M18 6.5a7.8 7.8 0 0 1 0 11" />
+        </svg>
+      );
+    case "muted":
+      return (
+        <svg {...props}>
+          <path d="M4 9.5h3.2L12 5.6v12.8l-4.8-3.9H4z" />
+          <path d="m15.5 9.5 5 5M20.5 9.5l-5 5" />
+        </svg>
+      );
+    case "trash":
+      return (
+        <svg {...props}>
+          <path d="M5 7h14M10 7V5h4v2M7 7l.8 12.2a1 1 0 0 0 1 .8h6.4a1 1 0 0 0 1-.8L17 7" />
+        </svg>
+      );
+    case "edit":
+      return (
+        <svg {...props}>
+          <path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10z" />
+        </svg>
+      );
+    case "grid":
+      return (
+        <svg {...props}>
+          <rect x="4" y="4" width="7" height="7" rx="1" />
+          <rect x="13" y="4" width="7" height="7" rx="1" />
+          <rect x="4" y="13" width="7" height="7" rx="1" />
+          <rect x="13" y="13" width="7" height="7" rx="1" />
+        </svg>
+      );
     case "more":
       return (
         <svg {...props}>
           <circle cx="6" cy="12" r="1.15" fill="currentColor" stroke="none" />
           <circle cx="12" cy="12" r="1.15" fill="currentColor" stroke="none" />
           <circle cx="18" cy="12" r="1.15" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "mic":
+      return (
+        <svg {...props}>
+          <rect x="9" y="3.5" width="6" height="11" rx="3" />
+          <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5" />
+        </svg>
+      );
+    case "mic-off":
+      return (
+        <svg {...props}>
+          <rect x="9" y="3.5" width="6" height="11" rx="3" />
+          <path d="M6.5 11.5a5.5 5.5 0 0 0 8.4 4.6M12 17v3.5M4.5 4.5l15 15" />
+        </svg>
+      );
+    case "cam":
+      return (
+        <svg {...props}>
+          <rect x="3.5" y="7" width="12" height="10" rx="2" />
+          <path d="m15.5 10.5 5-2.5v8l-5-2.5z" />
+        </svg>
+      );
+    case "cam-off":
+      return (
+        <svg {...props}>
+          <rect x="3.5" y="7" width="12" height="10" rx="2" />
+          <path d="m15.5 10.5 5-2.5v8l-5-2.5zM4 4l16 16" />
+        </svg>
+      );
+    case "flip":
+      return (
+        <svg {...props}>
+          <path d="M7 8H4.8A1.8 1.8 0 0 0 3 9.8v7.4A1.8 1.8 0 0 0 4.8 19H14" />
+          <path d="M17 16h2.2a1.8 1.8 0 0 0 1.8-1.8V6.8A1.8 1.8 0 0 0 19.2 5H10" />
+          <path d="m14 19 3-3-3-3M10 5 7 8l3 3" />
         </svg>
       );
     default:

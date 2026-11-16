@@ -38,7 +38,7 @@ function Gate() {
   const auth = useAuth();
   if (!auth.ready) return <Splash />;
   if (!auth.configured) return <SetupScreen />;
-  if (!auth.session) return <AuthScreen />;
+  if (!auth.session || auth.recovery) return <AuthScreen />;
   return (
     <StoreProvider onSignOut={auth.signOut}>
       <Shell />
@@ -47,7 +47,7 @@ function Gate() {
 }
 
 function Shell() {
-  const { state, go, openSheet, skipBoot, signOut } = useStore();
+  const { state, tab, openSheet, skipBoot, signOut } = useStore();
   if (state.accountError) {
     return (
       <div className="auth">
@@ -79,8 +79,17 @@ function Shell() {
       {state.view === "orders" && <Orders />}
       {state.view === "inbox" && <Inbox />}
       {state.view === "search" && <SearchPage />}
-      {!sub && state.view !== "feed" && <Nav current={current} bag={bag} unread={unread} solid onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
-      {!sub && state.view === "feed" && <Nav current="feed" bag={bag} unread={unread} onGo={go} onBolt={() => openSheet({ type: "bolt" })} />}
+      {!sub && (
+        <Nav
+          current={current}
+          bag={bag}
+          unread={unread}
+          live={state.lives.length > 0}
+          solid={state.view !== "feed"}
+          onGo={tab}
+          onCreate={() => openSheet({ type: "create" })}
+        />
+      )}
       <Sheets />
       <Toasts />
       <OrderFlash />
@@ -89,7 +98,7 @@ function Shell() {
   );
 }
 
-function Nav({ current, bag, unread, solid, onGo, onBolt }) {
+function Nav({ current, bag, unread, live, solid, onGo, onCreate }) {
   return (
     <nav className={solid ? "nav solid" : "nav"}>
       <button type="button" className={current === "feed" ? "on" : ""} onClick={() => onGo("feed")}>
@@ -99,12 +108,14 @@ function Nav({ current, bag, unread, solid, onGo, onBolt }) {
       <button type="button" className={current === "live" ? "on" : ""} onClick={() => onGo("live")}>
         <span className="nav-ico">
           <Icon name="live" size={24} />
-          <i className="dot" />
+          {live && <i className="dot" />}
         </span>
-        Live
+        LIVE
       </button>
-      <button type="button" className="nav-bolt" aria-label="Speedy menu" onClick={onBolt}>
-        <img src={logoUrl} alt="" />
+      <button type="button" className="nav-create" aria-label="Create" onClick={onCreate}>
+        <span>
+          <Icon name="plus" size={22} />
+        </span>
       </button>
       <button type="button" className={current === "shop" ? "on" : ""} onClick={() => onGo("shop")}>
         <span className="nav-ico">
@@ -118,7 +129,7 @@ function Nav({ current, bag, unread, solid, onGo, onBolt }) {
           <Icon name="user" size={24} />
           {unread > 0 && <i className="dot" />}
         </span>
-        Me
+        Profile
       </button>
     </nav>
   );

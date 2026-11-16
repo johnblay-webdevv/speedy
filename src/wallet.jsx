@@ -11,19 +11,23 @@ export function Wallet() {
     if (state.earned[task.id]) return;
     if (task.id === "checkin") earn("checkin", task.coins, "Daily check-in");
     if (task.id === "watch") {
-      go("live");
-      pushToast("Open a live and stay a few seconds");
+      const first = state.lives.find((live) => live.creatorId !== state.profile?.id);
+      if (first) go("room", first.id);
+      else {
+        go("live");
+        pushToast("Nobody else is live right now. Check back soon.");
+      }
     }
     if (task.id === "share") {
       go("feed");
-      pushToast("Tap share on any clip");
+      pushToast("Tap Share on any post");
     }
     if (task.id === "order") go("shop");
   };
 
   return (
     <section className="page sub">
-      <Header title="Coins" />
+      <Header title="Wallet" fallback="profile" />
       <section className="balance-card">
         <span className="row gap">
           <CoinMark size={22} />
@@ -55,12 +59,13 @@ export function Wallet() {
         <h2>Activity</h2>
       </div>
       <div className="pad-x">
+        {state.ledger.length === 0 && <p className="note">Coins you earn and spend show up here.</p>}
         {state.ledger.map((entry) => (
           <div className="list-row static" key={entry.id}>
             <CoinMark />
             <span className="grow">
               <b>{entry.label}</b>
-              <span className="note">{timeAgo(entry.at)}</span>
+              <span className="note">{timeAgo(entry.at)} ago</span>
             </span>
             <b className={entry.delta > 0 ? "up" : "down"}>
               {entry.delta > 0 ? "+" : ""}

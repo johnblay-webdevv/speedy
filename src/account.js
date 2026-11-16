@@ -1,8 +1,29 @@
 import { supabase } from "./supabase";
 
-function fail(error) {
-  if (error) throw new Error(error.message || "Request failed");
+const FRIENDLY = [
+  [/profiles_handle_key|handle is taken/i, "That handle is taken. Try another one."],
+  [/profiles_handle_check|handle must be/i, "Handles use 3 to 20 letters, numbers, or underscores."],
+  [/display_name/i, "Add a name up to 40 characters."],
+  [/compare_at/i, "The original price has to be higher than the price."],
+  [/violates check constraint/i, "Some details aren't valid. Check the form and try again."],
+  [/row-level security|permission denied/i, "You don't have permission to do that."],
+  [/failed to fetch|networkerror|load failed/i, "No connection. Check your internet and try again."],
+  [/jwt expired|invalid jwt/i, "Your session expired. Log in again."],
+];
+
+export function friendly(message) {
+  const text = message || "Something went wrong";
+  const match = FRIENDLY.find(([pattern]) => pattern.test(text));
+  return match ? match[1] : text;
 }
+
+function fail(error) {
+  if (error) throw new Error(friendly(error.message));
+}
+
+const LIVE_MAX_AGE = 12 * 3600 * 1000;
+const IMAGE_MAX = 10 * 1024 * 1024;
+const VIDEO_MAX = 50 * 1024 * 1024;
 
 function stamp(value) {
   const at = Date.parse(value);
@@ -81,18 +102,33 @@ function normalizeCatalog(raw) {
     shares: 0,
     thread: [],
   }));
-  const lives = (Array.isArray(data.lives) ? data.lives : []).map((live) => ({
-    id: live.id,
-    creatorId: live.creatorId,
-    title: live.title,
-    viewers: Number(live.viewers) || 0,
-    sold: Number(live.sold) || 0,
-    cover: live.cover,
-    focus: "center",
-    productIds: Array.isArray(live.productIds) ? live.productIds : [],
-    gradient: "#070708",
-  }));
+  const staleBefore = Date.now() - LIVE_MAX_AGE;
+  const lives = (Array.isArray(data.lives) ? data.lives : [])
+    .filter((live) => !live.startedAt || stamp(live.startedAt) > staleBefore)
+    .map((live) => ({
+      id: live.id,
+      creatorId: live.creatorId,
+      title: live.title,
+      viewers: Number(live.viewers) || 0,
+      sold: Number(live.sold) || 0,
+      cover: live.cover,
+      focus: "center",
+      productIds: Array.isArray(live.productIds) ? live.productIds : [],
+      gradient: "#070708",
+    }));
   return { people, products, clips, lives };
+}
+
+function mapNote(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    view: row.view,
+    param: row.param,
+    read: Boolean(row.read_at),
+    at: stamp(row.created_at),
+  };
 }
 
 function mapOrder(row) {
@@ -112,16 +148,38 @@ function mapOrder(row) {
   };
 }
 
-export async function uploadMedia(file) {
-  if (!file) throw new Error("Choose a photo");
-  if (!file.type.startsWith("image/")) throw new Error("Use a photo");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Photos need to be under 5 MB");
+async function shrinkImage(file, max = 1280) {
+  if (file.type === "image/gif") return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    return blob && blob.size < file.size ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : file;
+  } catch {
+    return file;
+  }
+}
+
+export async function uploadMedia(input, { allowVideo = false } = {}) {
+  if (!input) throw new Error("Choose a photo");
+  const video = input.type.startsWith("video/");
+  if (video && !allowVideo) throw new Error("Use a photo here");
+  if (!video && !input.type.startsWith("image/")) throw new Error(allowVideo ? "Use a photo or a video" : "Use a photo");
+  if (video && input.size > VIDEO_MAX) throw new Error("Videos need to be under 50 MB");
+  const file = video ? input : await shrinkImage(input);
+  if (!video && file.size > IMAGE_MAX) throw new Error("Photos need to be under 10 MB");
   const { data: authData, error: authError } = await supabase.auth.getUser();
   fail(authError);
   const user = authData.user;
   if (!user) throw new Error("Not signed in");
-  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-  const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+  const fallback = video ? "mp4" : "jpg";
+  const ext = (file.name.split(".").pop() || fallback).toLowerCase().replace(/[^a-z0-9]/g, "") || fallback;
+  const path = `${user.id}/${crypto.randomUUID()}.${ext === "quicktime" ? "mov" : ext}`;
   const { error } = await supabase.storage.from("media").upload(path, file, { contentType: file.type, upsert: false });
   fail(error);
   const { data } = supabase.storage.from("media").getPublicUrl(path);
@@ -241,15 +299,7 @@ export async function loadAccount() {
     },
     addresses,
     addressId: (addressesRes.data || []).find((item) => item.is_default)?.id || addresses[0]?.id || null,
-    notes: (notesRes.data || []).map((row) => ({
-      id: row.id,
-      title: row.title,
-      body: row.body,
-      view: row.view,
-      param: row.param,
-      read: Boolean(row.read_at),
-      at: stamp(row.created_at),
-    })),
+    notes: (notesRes.data || []).map(mapNote),
     sales,
     studio: studioFrom(sales),
     comments: {},
@@ -431,6 +481,24 @@ export async function createClip(input) {
   return data.id;
 }
 
+export async function fetchLiveToken(liveId) {
+  const { data, error: authError } = await supabase.auth.getSession();
+  fail(authError);
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Please log in again.");
+  const response = await fetch("/api/live-token", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ liveId }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Couldn't start the camera stream");
+  return payload;
+}
+
 export async function createLive(input) {
   const { data, error } = await supabase
     .from("lives")
@@ -455,9 +523,35 @@ export async function joinLive(id) {
   fail(authError);
   const { error } = await supabase.from("live_viewers").upsert(
     { live_id: id, user_id: data.user.id },
-    { onConflict: "live_id,user_id" },
+    { onConflict: "live_id,user_id", ignoreDuplicates: true },
   );
   fail(error);
+}
+
+export async function liveEnded(id) {
+  const { data, error } = await supabase.from("lives").select("ended_at").eq("id", id).maybeSingle();
+  fail(error);
+  return !data || Boolean(data.ended_at);
+}
+
+export async function deleteClip(id) {
+  const { error } = await supabase.from("clips").delete().eq("id", id);
+  fail(error);
+}
+
+export async function deleteProduct(id) {
+  const { error } = await supabase.from("products").delete().eq("id", id);
+  fail(error);
+}
+
+export async function loadNotes() {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("id, title, body, view, param, read_at, created_at")
+    .order("created_at", { ascending: false })
+    .limit(40);
+  fail(error);
+  return (data || []).map(mapNote);
 }
 
 export async function leaveLive(id) {
@@ -495,7 +589,7 @@ export async function sendMessage(id, body) {
 export async function loadComments(clipId) {
   const { data, error } = await supabase
     .from("comments")
-    .select("id, body, created_at, profiles(display_name)")
+    .select("id, body, created_at, profiles(display_name, avatar_url)")
     .eq("clip_id", clipId)
     .order("created_at", { ascending: false })
     .limit(40);
@@ -503,8 +597,9 @@ export async function loadComments(clipId) {
   return (data || []).map((row) => ({
     id: row.id,
     user: row.profiles?.display_name || "Member",
+    avatar: row.profiles?.avatar_url || "",
     text: row.body,
-    mine: false,
+    at: stamp(row.created_at),
   }));
 }
 
