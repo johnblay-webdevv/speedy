@@ -504,8 +504,8 @@ export async function createLive(input) {
     .from("lives")
     .insert({
       title: input.title,
-      cover_url: input.coverUrl,
-      product_ids: input.productIds,
+      cover_url: input.coverUrl || "",
+      product_ids: Array.isArray(input.productIds) ? input.productIds : [],
     })
     .select("id")
     .single();

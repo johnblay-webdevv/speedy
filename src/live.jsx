@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { joinLive, leaveLive, liveEnded, loadMessages, sendMessage, viewerCount } from "./account";
-import { coinLabel, compact, cx, money, uid } from "./format";
-import { BoltMark, CoinMark, Icon } from "./icons";
+import { compact, cx, money, uid } from "./format";
+import { BoltMark, Icon } from "./icons";
 import { useStore } from "./store";
-import { Avatar, BagButton, Header, MediaPicker, StockBar } from "./ui";
+import { Avatar, BagButton, Header } from "./ui";
 
 const LiveStream = lazy(() => import("./stream").then((mod) => ({ default: mod.LiveStream })));
 
@@ -23,9 +23,7 @@ export function LiveLobby() {
   return (
     <section className="page">
       <header className="subhead">
-        <button type="button" className="icon-btn" aria-label="Search" onClick={() => go("search")}>
-          <Icon name="search" size={22} />
-        </button>
+        <span className="subhead-spacer" />
         <h1>LIVE</h1>
         <button type="button" className="btn slim live-btn" onClick={() => (own ? go("room", own.id) : go("broadcast"))}>
           {own ? "Your LIVE" : "Go LIVE"}
@@ -34,52 +32,53 @@ export function LiveLobby() {
       {!featured && (
         <div className="empty">
           <Icon name="live" size={36} />
-          <h2>Nobody is live right now</h2>
-          <p>Go live to show off your products. Viewers can chat, send gifts and buy while you're on.</p>
-          <button type="button" className="btn" onClick={() => go("broadcast")}>
+          <h2>Nobody is live</h2>
+          <p>Go live with your camera. People can watch, chat and send gifts.</p>
+          <button type="button" className="btn live-btn" onClick={() => go("broadcast")}>
             Go LIVE
           </button>
         </div>
       )}
       {featured && (
         <button type="button" className="hero-live" onClick={() => go("room", featured.id)}>
-          <img src={featured.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: featured.focus }} />
+          {featured.cover ? (
+            <img src={featured.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: featured.focus }} />
+          ) : (
+            <span className="live-fallback" />
+          )}
           <span className="shade" />
           <span className="view-chip">
             <i className="dot ping" /> LIVE · {compact(featured.viewers)}
           </span>
           <span className="live-copy">
             <strong>{featured.title}</strong>
-            <span>
-              {person(featured.creatorId)?.name} · {compact(featured.sold)} sold
-            </span>
+            <span>{person(featured.creatorId)?.name}</span>
           </span>
         </button>
       )}
       {rest.length > 0 && (
-        <>
-          <div className="section">
-            <h2>Happening now</h2>
-          </div>
-          <div className="live-grid">
-            {rest.map((live) => {
-              const host = person(live.creatorId);
-              return (
-                <button type="button" className="live-card" key={live.id} onClick={() => go("room", live.id)}>
+        <div className="live-grid">
+          {rest.map((live) => {
+            const host = person(live.creatorId);
+            return (
+              <button type="button" className="live-card" key={live.id} onClick={() => go("room", live.id)}>
+                {live.cover ? (
                   <img src={live.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: live.focus }} />
-                  <span className="shade" />
-                  <span className="view-chip">
-                    <i className="dot" /> {compact(live.viewers)}
-                  </span>
-                  <span className="live-copy">
-                    <strong>{host?.name}</strong>
-                    <span>{live.title}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </>
+                ) : (
+                  <span className="live-fallback" />
+                )}
+                <span className="shade" />
+                <span className="view-chip">
+                  <i className="dot" /> {compact(live.viewers)}
+                </span>
+                <span className="live-copy">
+                  <strong>{host?.name}</strong>
+                  <span>{live.title}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </section>
   );
@@ -90,14 +89,14 @@ export function LiveRoom() {
     useStore();
   const room = live(state.param);
   const host = room ? person(room.creatorId) : null;
-  const products = useMemo(() => (room ? room.productIds.map((id) => product(id)).filter(Boolean) : []), [room, product]);
+  const products = useMemo(() => (room ? (room.productIds || []).map((id) => product(id)).filter(Boolean) : []), [room, product]);
   const [index, setIndex] = useState(0);
   const [thread, setThread] = useState([]);
   const [draft, setDraft] = useState("");
   const [banner, setBanner] = useState(null);
-  const [floats, setFloats] = useState([]);
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [shopOpen, setShopOpen] = useState(false);
   const mine = host && state.profile?.id === host.id;
 
   useEffect(() => {
@@ -105,6 +104,7 @@ export function LiveRoom() {
     let stop = false;
     setIndex(0);
     setThread([]);
+    setShopOpen(false);
     joinLive(room.id).catch(() => {});
     const pull = () => {
       viewerCount(room.id)
@@ -114,7 +114,7 @@ export function LiveRoom() {
         .catch(() => {});
       loadMessages(room.id)
         .then((messages) => {
-          if (!stop) setThread(messages.slice(-7));
+          if (!stop) setThread(messages.slice(-6));
         })
         .catch(() => {});
       liveEnded(room.id)
@@ -153,23 +153,16 @@ export function LiveRoom() {
           <Icon name="live" size={36} />
           <h2>This LIVE has ended</h2>
           <button type="button" className="btn" onClick={() => go("live", null, { replace: true })}>
-            See who's live
+            Back to LIVE
           </button>
         </div>
       </section>
     );
   }
 
-  const pinned = products[index % Math.max(1, products.length)] ?? null;
+  const pinned = products[index] ?? null;
   const left = pinned ? unitsLeft(pinned, state) : 0;
-
-  const float = (event) => {
-    if (event.target.closest("button, input, a, form")) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const id = uid("f");
-    setFloats((list) => [...list, { id, x: event.clientX - rect.left, y: event.clientY - rect.top }].slice(-8));
-    setTimeout(() => setFloats((list) => list.filter((item) => item.id !== id)), 900);
-  };
+  const bagCount = state.cart.reduce((sum, line) => sum + line.qty, 0);
 
   const send = async (event) => {
     event.preventDefault();
@@ -177,7 +170,7 @@ export function LiveRoom() {
     if (!text) return;
     const id = uid("m");
     setDraft("");
-    setThread((list) => [...list, { id, kind: "chat", user: state.profile?.name || "You", text }].slice(-7));
+    setThread((list) => [...list, { id, kind: "chat", user: state.profile?.name || "You", text }].slice(-6));
     try {
       await sendMessage(room.id, text);
     } catch (error) {
@@ -209,25 +202,25 @@ export function LiveRoom() {
   };
 
   return (
-    <section className="stack room" onClick={float}>
+    <section className="stack room">
       <Suspense
         fallback={
           <div className="room-stage">
-            <img className="room-photo" src={room.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: room.focus }} />
+            {room.cover ? (
+              <img className="room-photo" src={room.cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: room.focus }} />
+            ) : (
+              <span className="live-fallback" />
+            )}
           </div>
         }
       >
         <LiveStream liveId={room.id} isHost={mine} cover={room.cover} focus={room.focus} />
       </Suspense>
       <div className="clip-shade" />
-      {floats.map((item) => (
-        <span key={item.id} className="float-heart" style={{ left: item.x, top: item.y }}>
-          <Icon name="heart" size={28} filled />
-        </span>
-      ))}
+
       <header className="room-top">
         <button type="button" className="host-pill" onClick={() => openSheet({ type: "creator", creatorId: host.id })}>
-          <Avatar src={host.avatar} name={host.name} size={34} />
+          <Avatar src={host.avatar} name={host.name} size={32} />
           <span>
             <b>{host.name}</b>
             <span className="live-badge">LIVE</span>
@@ -241,27 +234,21 @@ export function LiveRoom() {
         <span className="view-chip room-view">
           <Icon name="eye" size={14} /> {compact(room.viewers)}
         </span>
-        <button type="button" className="coin-pill" onClick={() => go("wallet")}>
-          <CoinMark size={14} />
-          <span className="num">{coinLabel(state.coins)}</span>
-        </button>
         {mine ? (
           <button type="button" className="btn end" onClick={() => setConfirmEnd(true)}>
             End
           </button>
         ) : (
-          <button type="button" className="icon-btn" aria-label="Leave live" onClick={() => back("live")}>
+          <button type="button" className="icon-btn" aria-label="Leave" onClick={() => back("live")}>
             <Icon name="close" size={22} />
           </button>
         )}
       </header>
 
-      <div className="sold-pill">{compact(room.sold)} sold this LIVE</div>
-
-      <div className="room-comments" aria-live="polite">
+      <div className={cx("room-comments", products.length > 0 && shopOpen && "raised")} aria-live="polite">
         {thread.length === 0 && (
           <p className="bubble system">
-            <span>{mine ? "You're live. Say hi to your viewers." : `Welcome! Say hi to ${host.name}.`}</span>
+            <span>{mine ? "You're live. Say hi." : `Say hi to ${host.name}`}</span>
           </p>
         )}
         {thread.map((item) => (
@@ -274,7 +261,7 @@ export function LiveRoom() {
 
       {banner && (
         <div className="gift-banner" key={banner.nonce}>
-          <BoltMark size={54} />
+          <BoltMark size={44} />
           <div>
             <b>
               {banner.from} sent {banner.name}
@@ -284,10 +271,10 @@ export function LiveRoom() {
         </div>
       )}
 
-      {pinned && (
-        <div className="pin">
+      {products.length > 0 && shopOpen && pinned && (
+        <div className="pin slim">
           {products.length > 1 && (
-            <button type="button" className="pin-step" aria-label="Previous product" onClick={() => setIndex((value) => (value - 1 + products.length) % products.length)}>
+            <button type="button" className="pin-step" aria-label="Previous" onClick={() => setIndex((value) => (value - 1 + products.length) % products.length)}>
               <Icon name="back" size={16} />
             </button>
           )}
@@ -297,17 +284,12 @@ export function LiveRoom() {
               <span className="name">{pinned.name}</span>
               <span className="price-row">
                 <b>{money(pinned.price)}</b>
-                {pinned.was ? <s className="was">{money(pinned.was)}</s> : null}
-              </span>
-              <StockBar left={left} stock={pinned.stock} />
-              <span className="note">
-                {left > 0 ? `${left} left` : "Sold out"}
-                {products.length > 1 ? ` · ${(index % products.length) + 1}/${products.length}` : ""}
+                {left > 0 ? <span className="note">{left} left</span> : <span className="note">Sold out</span>}
               </span>
             </span>
           </button>
           {products.length > 1 && (
-            <button type="button" className="pin-step" aria-label="Next product" onClick={() => setIndex((value) => (value + 1) % products.length)}>
+            <button type="button" className="pin-step" aria-label="Next" onClick={() => setIndex((value) => (value + 1) % products.length)}>
               <Icon name="chevron" size={16} />
             </button>
           )}
@@ -323,37 +305,40 @@ export function LiveRoom() {
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Add comment…"
+          placeholder="Say something…"
           aria-label="Comment"
           maxLength={140}
           enterKeyHint="send"
         />
-        {draft.trim() && (
+        {draft.trim() ? (
           <button type="submit" className="round send" aria-label="Send">
             <Icon name="send" size={18} />
           </button>
-        )}
-        {!mine && (
-          <button type="button" className="round gift" aria-label="Send a gift" onClick={() => openSheet({ type: "gift", creatorId: host.id })}>
-            <Icon name="gift" size={20} />
+        ) : null}
+        {products.length > 0 && (
+          <button type="button" className={cx("round", shopOpen && "on")} aria-label="Shop" onClick={() => setShopOpen((value) => !value)}>
+            <Icon name="bag" size={18} />
           </button>
         )}
         {!mine && (
-          <BagButton count={state.cart.reduce((sum, line) => sum + line.qty, 0)} onClick={() => openSheet({ type: "cart", liveId: room.id })} />
+          <button type="button" className="round gift" aria-label="Gift" onClick={() => openSheet({ type: "gift", creatorId: host.id })}>
+            <Icon name="gift" size={18} />
+          </button>
         )}
+        {!mine && bagCount > 0 && <BagButton count={bagCount} onClick={() => openSheet({ type: "cart", liveId: room.id })} />}
       </form>
 
       {confirmEnd && (
-        <div className="confirm-wrap" onClick={(event) => event.stopPropagation()}>
+        <div className="confirm-wrap">
           <div className="confirm">
-            <h2>End your LIVE?</h2>
-            <p className="note">Viewers will be told the LIVE has ended.</p>
+            <h2>End LIVE?</h2>
+            <p className="note">Viewers will leave this room.</p>
             <div className="row gap">
               <button type="button" className="btn ghost grow-btn" onClick={() => setConfirmEnd(false)} disabled={ending}>
                 Keep going
               </button>
               <button type="button" className="btn danger grow-btn" onClick={end} disabled={ending}>
-                {ending ? "Ending…" : "End LIVE"}
+                {ending ? "Ending…" : "End"}
               </button>
             </div>
           </div>
@@ -364,32 +349,27 @@ export function LiveRoom() {
 }
 
 export function Broadcast() {
-  const { state, go, openSheet, publishLive, pushToast, liveFor } = useStore();
+  const { state, go, back, publishLive, pushToast, liveFor } = useStore();
   const mine = state.products.filter((product) => product.creatorId === state.profile?.id && product.stock > 0);
   const own = state.profile ? liveFor(state.profile.id) : null;
   const [title, setTitle] = useState("");
   const [picked, setPicked] = useState([]);
-  const [cover, setCover] = useState("");
+  const [showShop, setShowShop] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (mine.length === 1 && picked.length === 0) setPicked([mine[0].id]);
-  }, [mine.length]);
 
   const toggle = (id) => {
     setPicked((list) => (list.includes(id) ? list.filter((item) => item !== id) : [...list, id]));
   };
 
-  const start = async (event) => {
-    event.preventDefault();
-    if (!title.trim()) return pushToast("Give your LIVE a title");
-    if (picked.length === 0) return pushToast("Pick at least one product");
+  const start = async () => {
+    if (busy) return;
     setBusy(true);
     try {
-      const first = mine.find((product) => product.id === picked[0]);
+      const first = mine.find((product) => picked.includes(product.id));
+      const label = title.trim() || `${state.profile?.name || "My"} LIVE`;
       const id = await publishLive({
-        title: title.trim(),
-        coverUrl: cover || first.image,
+        title: label.slice(0, 80),
+        coverUrl: first?.image || state.profile?.avatar || "",
         productIds: picked,
       });
       go("room", id, { replace: true });
@@ -405,24 +385,8 @@ export function Broadcast() {
         <Header title="Go LIVE" fallback="live" />
         <div className="empty">
           <h2>You're already live</h2>
-          <button type="button" className="btn" onClick={() => go("room", own.id, { replace: true })}>
-            Return to your LIVE
-          </button>
-        </div>
-      </section>
-    );
-  }
-
-  if (mine.length === 0) {
-    return (
-      <section className="page sub">
-        <Header title="Go LIVE" fallback="live" />
-        <div className="empty">
-          <Icon name="bag" size={36} />
-          <h2>List a product first</h2>
-          <p>A LIVE sells products you have in stock. Add one and come back.</p>
-          <button type="button" className="btn" onClick={() => openSheet({ type: "list" })}>
-            Sell a product
+          <button type="button" className="btn live-btn" onClick={() => go("room", own.id, { replace: true })}>
+            Return to LIVE
           </button>
         </div>
       </section>
@@ -430,37 +394,59 @@ export function Broadcast() {
   }
 
   return (
-    <section className="page sub">
-      <Header title="Go LIVE" fallback="live" />
-      <form className="auth-form pad" onSubmit={start}>
-        <MediaPicker label="Add cover photo" hint="Optional. We'll use your first product photo." value={cover} onChange={setCover} />
-        <label>
-          Title
-          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={80} placeholder="e.g. Sneaker drop, 20% off" required />
-        </label>
-        <div className="field">
-          <span className="field-label">Products to sell · {picked.length} picked</span>
-          {mine.map((product) => {
-            const on = picked.includes(product.id);
-            return (
-              <button type="button" key={product.id} className={cx("list-row pick", on && "on")} onClick={() => toggle(product.id)} aria-pressed={on}>
-                <img src={product.image} alt="" referrerPolicy="no-referrer" />
-                <span className="grow">
-                  <b>{product.name}</b>
-                  <span className="note">
-                    {money(product.price)} · {product.stock} left
+    <section className="stack go-live">
+      <div className="go-live-stage">
+        <span className="go-live-glow" />
+        <Icon name="live" size={42} />
+        <h1>Go LIVE</h1>
+        <p>Tap start and allow camera and mic.</p>
+      </div>
+
+      <header className="go-live-top">
+        <button type="button" className="icon-btn" aria-label="Back" onClick={() => back("live")}>
+          <Icon name="close" size={22} />
+        </button>
+      </header>
+
+      <div className="go-live-panel">
+        <input
+          className="go-live-title"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          maxLength={80}
+          placeholder="Add a title (optional)"
+          aria-label="LIVE title"
+        />
+
+        {mine.length > 0 && (
+          <button type="button" className="go-live-shop" onClick={() => setShowShop((value) => !value)}>
+            <Icon name="bag" size={16} />
+            {picked.length ? `${picked.length} product${picked.length === 1 ? "" : "s"}` : "Add products (optional)"}
+            <Icon name="chevron" size={14} />
+          </button>
+        )}
+
+        {showShop && mine.length > 0 && (
+          <div className="go-live-picks">
+            {mine.map((product) => {
+              const on = picked.includes(product.id);
+              return (
+                <button type="button" key={product.id} className={cx("go-live-pick", on && "on")} onClick={() => toggle(product.id)} aria-pressed={on}>
+                  <img src={product.image} alt="" referrerPolicy="no-referrer" />
+                  <span>
+                    <b>{product.name}</b>
+                    <span>{money(product.price)}</span>
                   </span>
-                </span>
-                <span className={cx("check", on && "on")}>{on && <Icon name="check" size={14} />}</span>
-              </button>
-            );
-          })}
-        </div>
-        <p className="note">Your phone will ask for camera and mic. Viewers see your stream, chat, gifts and products.</p>
-        <button type="submit" className="btn block live-btn" disabled={busy}>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <button type="button" className="btn block live-btn go-live-start" onClick={start} disabled={busy}>
           {busy ? "Starting…" : "Start LIVE"}
         </button>
-      </form>
+      </div>
     </section>
   );
 }

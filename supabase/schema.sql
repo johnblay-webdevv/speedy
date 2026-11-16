@@ -83,12 +83,21 @@ create table if not exists public.lives (
   id uuid primary key default gen_random_uuid(),
   host_id uuid not null references public.profiles (id) on delete cascade,
   title text not null check (char_length(title) between 1 and 80),
-  cover_url text not null check (char_length(cover_url) between 1 and 500),
-  product_ids uuid[] not null check (cardinality(product_ids) > 0),
+  cover_url text not null default '' check (char_length(cover_url) <= 500),
+  product_ids uuid[] not null default '{}',
   sold_count integer not null default 0 check (sold_count >= 0),
   started_at timestamptz not null default now(),
   ended_at timestamptz
 );
+
+alter table public.lives drop constraint if exists lives_cover_url_check;
+alter table public.lives drop constraint if exists lives_product_ids_check;
+alter table public.lives alter column cover_url set default '';
+alter table public.lives alter column product_ids set default '{}';
+do $$ begin
+  alter table public.lives add constraint lives_cover_url_check check (char_length(cover_url) <= 500);
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.live_viewers (
   live_id uuid not null references public.lives (id) on delete cascade,

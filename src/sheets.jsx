@@ -638,7 +638,7 @@ function CreateSheet() {
               <Icon name="live" size={24} />
             </span>
             <b>Go LIVE</b>
-            <span className="note">Sell live</span>
+            <span className="note">Open your camera</span>
           </button>
         </div>
         <button type="button" className="list-row" onClick={() => go("studio")}>

@@ -186,7 +186,11 @@ export function LiveStream({ liveId, isHost, cover, focus, onStatus }) {
   return (
     <>
       <div className="room-stage" ref={stageRef}>
-        <img className="room-photo" src={cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: focus }} />
+        {cover ? (
+          <img className="room-photo" src={cover} alt="" referrerPolicy="no-referrer" style={{ objectPosition: focus }} />
+        ) : (
+          <span className="live-fallback" />
+        )}
       </div>
       {status !== "live" && message && (
         <div className="stream-status">
