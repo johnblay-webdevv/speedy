@@ -492,7 +492,12 @@ export async function fetchLiveToken(liveId) {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ liveId }),
+    body: JSON.stringify({
+      liveId,
+      // Public values already in the web app; used if Vercel env names differ.
+      supabaseUrl: import.meta.env.VITE_SUPABASE_URL,
+      supabaseKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+    }),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || "Couldn't start the camera stream");

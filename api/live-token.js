@@ -39,20 +39,26 @@ function readBody(req) {
   });
 }
 
+function publicUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return "";
+    if (!parsed.hostname.endsWith(".supabase.co")) return "";
+    return `${parsed.origin}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function mintLiveToken(req) {
   const livekitUrl = env("LIVEKIT_URL");
   const apiKey = env("LIVEKIT_API_KEY");
   const apiSecret = env("LIVEKIT_API_SECRET");
-  const supabaseUrl = env("VITE_SUPABASE_URL", "SUPABASE_URL");
-  const supabaseKey = env("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
 
   if (!livekitUrl || !apiKey || !apiSecret) {
     const error = new Error("Live streaming is not configured yet.");
-    error.status = 503;
-    throw error;
-  }
-  if (!supabaseUrl || !supabaseKey) {
-    const error = new Error("Supabase is not configured.");
     error.status = 503;
     throw error;
   }
@@ -70,6 +76,19 @@ export async function mintLiveToken(req) {
   if (!liveId) {
     const error = new Error("Missing LIVE room.");
     error.status = 400;
+    throw error;
+  }
+
+  // Same public names the Vite build already accepts on Vercel, plus the
+  // publishable values already shipped in the app bundle as a fallback.
+  const supabaseUrl =
+    env("VITE_SUPABASE_URL", "SUPABASE_URL", "_SUPABASE_URL") || publicUrl(body?.supabaseUrl);
+  const supabaseKey =
+    env("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "_SUPABASE_ANON_KEY") || String(body?.supabaseKey || "").trim();
+
+  if (!supabaseUrl || !supabaseKey) {
+    const error = new Error("Supabase is not configured.");
+    error.status = 503;
     throw error;
   }
 
