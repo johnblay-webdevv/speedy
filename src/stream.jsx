@@ -125,7 +125,12 @@ export function LiveStream({ liveId, isHost, cover, focus, onStatus }) {
       } catch (error) {
         if (dead) return;
         setStatus("error");
-        setMessage(error.message || "Couldn't start the camera");
+        const raw = error.message || "Couldn't start the camera";
+        setMessage(
+          /invalid token/i.test(raw)
+            ? "Camera keys look wrong. Recreate a LiveKit key and update LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET on Vercel, then redeploy."
+            : raw,
+        );
       }
     })();
 

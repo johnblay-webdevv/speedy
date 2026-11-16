@@ -1,8 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, TokenVerifier } from "livekit-server-sdk";
+
+function clean(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+}
 
 function env(...names) {
-  return names.map((name) => process.env[name]).find(Boolean) || "";
+  return names.map((name) => clean(process.env[name])).find(Boolean) || "";
 }
 
 function json(res, status, body) {
@@ -40,24 +47,50 @@ function readBody(req) {
 }
 
 function publicUrl(value) {
-  const url = String(value || "").trim();
+  const url = clean(value);
   if (!url) return "";
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") return "";
     if (!parsed.hostname.endsWith(".supabase.co")) return "";
-    return `${parsed.origin}`;
+    return parsed.origin;
   } catch {
     return "";
   }
 }
 
+function livekitUrl(value) {
+  let url = clean(value);
+  if (!url) return "";
+  url = url.replace(/^https:\/\//i, "wss://").replace(/^http:\/\//i, "ws://");
+  return url.replace(/\/$/, "");
+}
+
+async function signLiveToken({ apiKey, apiSecret, identity, name, room, canPublish }) {
+  const access = new AccessToken(apiKey, apiSecret, {
+    identity,
+    name,
+    ttl: "2h",
+  });
+  access.addGrant({
+    roomJoin: true,
+    room,
+    canPublish: Boolean(canPublish),
+    canSubscribe: true,
+    canPublishData: true,
+  });
+  const token = await access.toJwt();
+  // Catch key/secret mismatches before the browser tries to connect.
+  await new TokenVerifier(apiKey, apiSecret).verify(token);
+  return token;
+}
+
 export async function mintLiveToken(req) {
-  const livekitUrl = env("LIVEKIT_URL");
+  const url = livekitUrl(env("LIVEKIT_URL"));
   const apiKey = env("LIVEKIT_API_KEY");
   const apiSecret = env("LIVEKIT_API_SECRET");
 
-  if (!livekitUrl || !apiKey || !apiSecret) {
+  if (!url || !apiKey || !apiSecret) {
     const error = new Error("Live streaming is not configured yet.");
     error.status = 503;
     throw error;
@@ -72,19 +105,17 @@ export async function mintLiveToken(req) {
   }
 
   const body = await readBody(req);
-  const liveId = String(body?.liveId || "").trim();
+  const liveId = clean(body?.liveId);
   if (!liveId) {
     const error = new Error("Missing LIVE room.");
     error.status = 400;
     throw error;
   }
 
-  // Same public names the Vite build already accepts on Vercel, plus the
-  // publishable values already shipped in the app bundle as a fallback.
   const supabaseUrl =
     env("VITE_SUPABASE_URL", "SUPABASE_URL", "_SUPABASE_URL") || publicUrl(body?.supabaseUrl);
   const supabaseKey =
-    env("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "_SUPABASE_ANON_KEY") || String(body?.supabaseKey || "").trim();
+    env("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "_SUPABASE_ANON_KEY") || clean(body?.supabaseKey);
 
   if (!supabaseUrl || !supabaseKey) {
     const error = new Error("Supabase is not configured.");
@@ -126,22 +157,27 @@ export async function mintLiveToken(req) {
   const { data: profile } = await supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
   const name = profile?.display_name || user.email?.split("@")[0] || "Viewer";
 
-  const access = new AccessToken(apiKey, apiSecret, {
-    identity: user.id,
-    name,
-    ttl: "2h",
-  });
-  access.addGrant({
-    roomJoin: true,
-    room: liveId,
-    canPublish: host,
-    canSubscribe: true,
-    canPublishData: true,
-  });
+  let liveToken;
+  try {
+    liveToken = await signLiveToken({
+      apiKey,
+      apiSecret,
+      identity: user.id,
+      name,
+      room: liveId,
+      canPublish: host,
+    });
+  } catch {
+    const error = new Error(
+      "LiveKit keys look wrong. In Vercel, set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET from the same Create key popup, then redeploy.",
+    );
+    error.status = 503;
+    throw error;
+  }
 
   return {
-    token: await access.toJwt(),
-    url: livekitUrl,
+    token: liveToken,
+    url,
     host,
   };
 }
