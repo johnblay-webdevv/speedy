@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { loadShareTargets } from "./account";
 import { GIFTS, LISTING_CATEGORIES } from "./config";
 import { coinLabel, compact, cx, money, moneyExact, plural, timeAgo } from "./format";
 import { BoltMark, CoinMark, Icon } from "./icons";
@@ -105,12 +106,42 @@ function CommentsSheet({ clipId }) {
 }
 
 function ShareSheet({ clipId }) {
-  const { state, share } = useStore();
+  const { state, share, shareTo, person } = useStore();
   const [manual, setManual] = useState("");
+  const [targets, setTargets] = useState(null);
+  const [sent, setSent] = useState({});
+  const [busyId, setBusyId] = useState("");
   const canShare = typeof navigator !== "undefined" && !!navigator.share;
+
+  useEffect(() => {
+    let stop = false;
+    loadShareTargets()
+      .then((list) => {
+        if (!stop) setTargets(list);
+      })
+      .catch(() => {
+        if (!stop) setTargets([]);
+      });
+    return () => {
+      stop = true;
+    };
+  }, [clipId]);
+
   const run = async (method) => {
     const result = await share(clipId, method);
     if (result?.manual) setManual(result.manual);
+  };
+
+  const sendTo = async (id) => {
+    if (sent[id] || busyId) return;
+    setBusyId(id);
+    try {
+      await shareTo(clipId, id);
+      setSent((current) => ({ ...current, [id]: true }));
+    } catch {
+      // shareTo already shows the error toast.
+    }
+    setBusyId("");
   };
 
   if (manual) {
@@ -126,28 +157,60 @@ function ShareSheet({ clipId }) {
       </>
     );
   }
+
+  const people = (targets || [])
+    .map((item) => {
+      const profile = person(item.id);
+      return profile ? { ...item, profile } : null;
+    })
+    .filter(Boolean);
+
   return (
     <>
       <div className="sheet-head center">
         <h2>Share to</h2>
       </div>
-      <div className="sheet-body share-grid">
-        {canShare && (
-          <button type="button" className="share-tile" onClick={() => run("native")}>
-            <span className="share-icon">
-              <Icon name="share" size={24} />
-            </span>
-            Share to…
-          </button>
+      <div className="sheet-body">
+        {targets === null && <p className="note center-text">Loading people…</p>}
+        {targets && people.length === 0 && (
+          <p className="note center-text">People you follow, and accounts you've liked or commented with, show up here.</p>
         )}
-        <button type="button" className="share-tile" onClick={() => run("copy")}>
-          <span className="share-icon alt">
-            <Icon name="check" size={24} />
-          </span>
-          Copy link
-        </button>
+        {people.length > 0 && (
+          <div className="share-people">
+            {people.map((item) => (
+              <button type="button" key={item.id} className="share-person" disabled={busyId === item.id} onClick={() => sendTo(item.id)}>
+                <span className={cx("share-avatar", sent[item.id] && "sent")}>
+                  <Avatar src={item.profile.avatar} name={item.profile.name} size={56} />
+                  {sent[item.id] && (
+                    <i>
+                      <Icon name="check" size={14} />
+                    </i>
+                  )}
+                </span>
+                <b>{item.profile.name.split(" ")[0]}</b>
+                <span>{sent[item.id] ? "Sent" : item.kind === "follow" ? "Following" : "Recent"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="share-grid">
+          {canShare && (
+            <button type="button" className="share-tile" onClick={() => run("native")}>
+              <span className="share-icon">
+                <Icon name="share" size={24} />
+              </span>
+              Share to…
+            </button>
+          )}
+          <button type="button" className="share-tile" onClick={() => run("copy")}>
+            <span className="share-icon alt">
+              <Icon name="check" size={24} />
+            </span>
+            Copy link
+          </button>
+        </div>
+        {!state.earned.share && <p className="note center-text sheet-foot">Share a post to earn 5 coins.</p>}
       </div>
-      {!state.earned.share && <p className="note center-text sheet-foot">Share a post to earn 5 coins.</p>}
     </>
   );
 }

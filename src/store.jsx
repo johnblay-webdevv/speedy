@@ -15,6 +15,8 @@ import {
   loadCatalog,
   loadComments,
   loadNotes,
+  loadShareTargets,
+  shareClipWith,
   markNoteRead,
   placeOrder,
   selectAddress as saveSelectedAddress,
@@ -565,6 +567,18 @@ export function StoreProvider({ onSignOut, children }) {
 
   const clipLink = (clipId) => `${window.location.origin}${window.location.pathname}#/feed/${clipId}`;
 
+  const shareTo = async (clipId, userId) => {
+    const person = stateRef.current.people.find((item) => item.id === userId);
+    try {
+      await shareClipWith(userId, clipId);
+    } catch (error) {
+      pushToast(error.message || "Couldn't send that");
+      throw error;
+    }
+    const applied = stateRef.current.earned.share ? false : await earn("share", 5, "Shared a clip");
+    if (!applied) pushToast(`Sent to ${person?.name || "them"}`);
+  };
+
   const share = async (clipId, method = "copy") => {
     const link = clipLink(clipId);
     let done = false;
@@ -722,6 +736,7 @@ export function StoreProvider({ onSignOut, children }) {
       checkout,
       sendGift,
       share,
+      shareTo,
       earn,
       markRead,
       setAddress,

@@ -113,9 +113,7 @@ function Nav({ current, bag, unread, live, solid, onGo, onCreate }) {
         LIVE
       </button>
       <button type="button" className="nav-create" aria-label="Create" onClick={onCreate}>
-        <span>
-          <Icon name="plus" size={22} />
-        </span>
+        <img src={logoUrl} alt="" />
       </button>
       <button type="button" className={current === "shop" ? "on" : ""} onClick={() => onGo("shop")}>
         <span className="nav-ico">

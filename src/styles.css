@@ -1436,18 +1436,15 @@ input::placeholder { color: #8d8d96; }
   height: 52px;
   display: grid;
   place-items: center;
+  background: transparent;
 }
-.nav-create span {
-  width: 46px;
-  height: 32px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  background: #fff;
-  color: #111;
-  box-shadow: -3px 0 0 #3df0ff, 3px 0 0 #ff335c;
+.nav-create img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  border-radius: 12px;
 }
-.nav .nav-create { color: #111; }
+.nav .nav-create { color: inherit; }
 
 .sheet-close {
   position: absolute;
@@ -1503,6 +1500,45 @@ input::placeholder { color: #8d8d96; }
 }
 .sheet-body .grid3 { margin: 0 -16px; }
 
+.share-people {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 2px 14px;
+  margin: 0 -4px 8px;
+}
+.share-person {
+  width: 72px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  background: transparent;
+}
+.share-person b, .share-person > span {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-person b { font-size: 12px; }
+.share-person > span { font-size: 11px; color: var(--dim); }
+.share-avatar { position: relative; display: grid; }
+.share-avatar.sent { opacity: 0.72; }
+.share-avatar i {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: #111;
+}
 .share-grid { display: flex; justify-content: center; gap: 28px; padding-top: 8px; padding-bottom: 12px; }
 .share-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; }
 .share-icon {

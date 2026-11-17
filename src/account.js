@@ -549,6 +549,40 @@ export async function deleteProduct(id) {
   fail(error);
 }
 
+export async function loadShareTargets() {
+  const { data: userData, error: authError } = await supabase.auth.getUser();
+  fail(authError);
+  const me = userData.user.id;
+  const ranked = new Map();
+  const add = (id, at, kind) => {
+    if (!id || id === me) return;
+    const time = Date.parse(at) || 0;
+    const current = ranked.get(id);
+    if (!current) ranked.set(id, { id, at: time, kind });
+    else if (time > current.at) ranked.set(id, { id, at: time, kind: current.kind === "follow" ? "follow" : kind });
+  };
+
+  const [followsRes, wroteRes, receivedRes, likesRes] = await Promise.all([
+    supabase.from("follows").select("following_id, created_at").eq("follower_id", me),
+    supabase.from("comments").select("created_at, clips(creator_id)").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
+    supabase.from("comments").select("user_id, created_at, clips!inner(creator_id)").eq("clips.creator_id", me).order("created_at", { ascending: false }).limit(40),
+    supabase.from("likes").select("created_at, clips(creator_id)").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
+  ]);
+  [followsRes, wroteRes, receivedRes, likesRes].forEach((result) => fail(result.error));
+
+  (followsRes.data || []).forEach((row) => add(row.following_id, row.created_at, "follow"));
+  (wroteRes.data || []).forEach((row) => add(row.clips?.creator_id, row.created_at, "recent"));
+  (receivedRes.data || []).forEach((row) => add(row.user_id, row.created_at, "recent"));
+  (likesRes.data || []).forEach((row) => add(row.clips?.creator_id, row.created_at, "recent"));
+
+  return [...ranked.values()].sort((a, b) => b.at - a.at);
+}
+
+export async function shareClipWith(userId, clipId) {
+  const { error } = await supabase.rpc("share_clip", { p_user: userId, p_clip: clipId });
+  fail(error);
+}
+
 export async function loadNotes() {
   const { data, error } = await supabase
     .from("notifications")

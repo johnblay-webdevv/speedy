@@ -827,6 +827,37 @@ grant select on public.orders to authenticated;
 grant select on public.order_items to authenticated;
 grant select, update on public.notifications to authenticated;
 
+create or replace function public.share_clip(p_user uuid, p_clip uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_me uuid := auth.uid();
+  v_name text;
+begin
+  if v_me is null then
+    raise exception 'Please log in again.';
+  end if;
+  if p_user is null or p_user = v_me then
+    raise exception 'Pick someone else.';
+  end if;
+  if not exists (select 1 from public.clips where id = p_clip) then
+    raise exception 'That post is gone.';
+  end if;
+  if not exists (select 1 from public.profiles where id = p_user) then
+    raise exception 'That account is gone.';
+  end if;
+  select display_name into v_name from public.profiles where id = v_me;
+  insert into public.notifications (user_id, title, body, view, param)
+  values (p_user, coalesce(v_name, 'Someone'), 'shared a post with you', 'feed', p_clip::text);
+end;
+$$;
+
+revoke all on function public.share_clip(uuid, uuid) from public;
+grant execute on function public.share_clip(uuid, uuid) to authenticated;
+
 drop policy if exists profiles_read on public.profiles;
 create policy profiles_read on public.profiles for select to authenticated using (true);
 drop policy if exists profiles_update on public.profiles;
