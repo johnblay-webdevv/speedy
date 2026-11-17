@@ -1175,7 +1175,53 @@ input::placeholder { color: #8d8d96; }
 .hscroll img { width: 92px; height: 124px; border-radius: 12px; object-fit: cover; }
 .creator-top, .person { display: flex; align-items: center; gap: 10px; width: 100%; }
 .person-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; color: inherit; text-align: left; }
-.gift-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.gift-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.gift-mark { font-size: 30px; line-height: 1; }
+.gift-mark.lg { font-size: 42px; }
+.gift-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  line-height: 1;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.16), transparent 45%),
+    linear-gradient(160deg, #2a241c, #15151a);
+  border: 1px solid rgba(255, 211, 106, 0.25);
+}
+.gift-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 8px 0 4px;
+  font-size: 20px;
+}
+.gift-strip span { flex: none; }
+.gift-cost { display: inline-flex; align-items: center; gap: 3px; color: #ffd36a; font-size: 11px; }
+.pack-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0 14px;
+}
+.coin-pack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-height: 128px;
+  padding: 10px 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 211, 106, 0.28);
+  background: #14120c;
+  color: #fff;
+}
+.coin-pack b { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coin-pack > span:last-child { color: var(--dim); font-size: 12px; }
+.pack-note { padding: 8px 16px 0; }
 .gift-card {
   display: flex;
   flex-direction: column;

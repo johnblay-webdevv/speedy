@@ -491,11 +491,19 @@ begin
     raise exception 'Pick someone else';
   end if;
   if not (
-    (p_amount = 10 and p_name = 'Spark')
-    or (p_amount = 50 and p_name = 'Bolt')
-    or (p_amount = 200 and p_name = 'Storm')
-    or (p_amount = 500 and p_name = 'Surge')
-    or (p_amount = 1000 and p_name = 'Legend')
+    (p_amount = 10 and p_name = 'Rose')
+    or (p_amount = 30 and p_name = 'Finger heart')
+    or (p_amount = 60 and p_name = 'Ice cream')
+    or (p_amount = 139 and p_name = 'Doughnut')
+    or (p_amount = 210 and p_name = 'Perfume')
+    or (p_amount = 350 and p_name = 'Sunglasses')
+    or (p_amount = 490 and p_name = 'Crown')
+    or (p_amount = 630 and p_name = 'Sports car')
+    or (p_amount = 3080 and p_name = 'Yacht')
+    or (p_amount = 5250 and p_name = 'Castle')
+    or (p_amount = 7000 and p_name = 'Lion')
+    or (p_amount = 11900 and p_name = 'Universe')
+    or (p_amount = 17500 and p_name = 'Drama')
   ) then
     raise exception 'Unknown gift';
   end if;
@@ -976,6 +984,40 @@ grant execute on function public.apply_coin_delta(integer, text, text) to authen
 
 revoke all on function public.send_gift(uuid, integer, text) from public;
 grant execute on function public.send_gift(uuid, integer, text) to authenticated;
+
+create or replace function public.buy_coins(p_coins integer)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user uuid := auth.uid();
+  v_coins integer;
+  v_id uuid;
+begin
+  if v_user is null then
+    raise exception 'Not signed in';
+  end if;
+  if p_coins not in (10, 30, 60, 139, 210, 350, 490, 630, 3080, 5250, 7000, 11900, 17500) then
+    raise exception 'Unknown coin pack';
+  end if;
+
+  update public.wallets
+  set coins = coins + p_coins
+  where user_id = v_user
+  returning coins into v_coins;
+
+  insert into public.ledger (user_id, label, delta)
+  values (v_user, 'Bought ' || p_coins || ' coins', p_coins)
+  returning id into v_id;
+
+  return jsonb_build_object('coins', v_coins, 'ledger_id', v_id);
+end;
+$$;
+
+revoke all on function public.buy_coins(integer) from public;
+grant execute on function public.buy_coins(integer) to authenticated;
 
 revoke all on function public.place_order(jsonb, integer, uuid, uuid) from public;
 grant execute on function public.place_order(jsonb, integer, uuid, uuid) to authenticated;

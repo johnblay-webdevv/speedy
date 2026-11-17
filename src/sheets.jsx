@@ -106,7 +106,8 @@ function CommentsSheet({ clipId }) {
 }
 
 function ShareSheet({ clipId }) {
-  const { state, share, shareTo, person } = useStore();
+  const { state, share, shareTo } = useStore();
+  const followed = state.people.filter((profile) => state.following[profile.id] && profile.id !== state.profile?.id);
   const [manual, setManual] = useState("");
   const [targets, setTargets] = useState(null);
   const [sent, setSent] = useState({});
@@ -158,12 +159,11 @@ function ShareSheet({ clipId }) {
     );
   }
 
-  const people = (targets || [])
-    .map((item) => {
-      const profile = person(item.id);
-      return profile ? { ...item, profile } : null;
-    })
-    .filter(Boolean);
+  const remote = targets || [];
+  const people = [
+    ...followed.map((profile) => ({ id: profile.id, kind: "follow", profile })),
+    ...remote.filter((item) => !state.following[item.id]),
+  ];
 
   return (
     <>
@@ -658,9 +658,11 @@ function GiftSheet({ creatorId }) {
       <div className="sheet-body gift-grid">
         {GIFTS.map((gift) => (
           <button type="button" key={gift.id} className="gift-card" onClick={() => sendGift(gift.id, creatorId)} disabled={state.coins < gift.coins}>
-            <BoltMark size={gift.coins >= 500 ? 46 : 32} />
+            <span className="gift-avatar" aria-hidden="true">{gift.mark}</span>
             <b>{gift.name}</b>
-            <span>{coinLabel(gift.coins)}</span>
+            <span className="gift-cost">
+              <CoinMark size={12} /> {coinLabel(gift.coins)}
+            </span>
           </button>
         ))}
       </div>

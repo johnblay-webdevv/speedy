@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useReducer, useRef } fro
 import {
   addAddress as insertAddress,
   addComment as insertComment,
+  buyCoins,
   changeCoins,
   createClip,
   createLive,
@@ -543,6 +544,16 @@ export function StoreProvider({ onSignOut, children }) {
     }
   };
 
+  const buyPack = async (coins) => {
+    try {
+      const result = await buyCoins(coins);
+      dispatch({ type: "wallet-sync", coins: result.coins, entry: result.entry });
+      pushToast(`+${coins} coins`);
+    } catch (error) {
+      pushToast(error.message);
+    }
+  };
+
   const sendGift = async (giftId, creatorId) => {
     const gift = GIFTS.find((item) => item.id === giftId);
     if (!gift) return;
@@ -734,6 +745,7 @@ export function StoreProvider({ onSignOut, children }) {
       addToCart,
       changeQty,
       checkout,
+      buyPack,
       sendGift,
       share,
       shareTo,

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { joinLive, leaveLive, liveEnded, loadMessages, sendMessage, viewerCount } from "./account";
 import { compact, cx, money, uid } from "./format";
-import { BoltMark, Icon } from "./icons";
+import { Icon } from "./icons";
 import { useStore } from "./store";
 import { Avatar, BagButton, Header } from "./ui";
 
@@ -261,7 +261,7 @@ export function LiveRoom() {
 
       {banner && (
         <div className="gift-banner" key={banner.nonce}>
-          <BoltMark size={44} />
+          <span className="gift-mark lg" aria-hidden="true">{banner.mark || "🎁"}</span>
           <div>
             <b>
               {banner.from} sent {banner.name}

@@ -1,11 +1,11 @@
-import { TASKS } from "./config";
+import { COIN_PACKS, GIFTS, TASKS } from "./config";
 import { coinLabel, cx, moneyExact, timeAgo } from "./format";
 import { CoinMark } from "./icons";
 import { useStore } from "./store";
 import { Header } from "./ui";
 
 export function Wallet() {
-  const { state, go, openSheet, earn, pushToast } = useStore();
+  const { state, go, earn, pushToast, buyPack } = useStore();
 
   const onTask = (task) => {
     if (state.earned[task.id]) return;
@@ -34,8 +34,33 @@ export function Wallet() {
           <span className="note">Speedy Coins</span>
         </span>
         <strong className="num">{coinLabel(state.coins)}</strong>
-        <p>100 coins = $1 at checkout, up to 30% of the bag.</p>
+        <div className="gift-strip" aria-hidden="true">
+          {GIFTS.map((gift) => (
+            <span key={gift.id}>{gift.mark}</span>
+          ))}
+        </div>
+        <p>Spend coins as gifts, from a rose to a lion.</p>
       </section>
+
+      <div className="section">
+        <h2>Gifts</h2>
+      </div>
+      <div className="pack-grid">
+        {COIN_PACKS.map((pack) => {
+          const gift = GIFTS.find((item) => item.coins === pack.coins);
+          return (
+            <button type="button" key={pack.coins} className="coin-pack" onClick={() => buyPack(pack.coins)}>
+              <span className="gift-avatar">{gift?.mark}</span>
+              <b>{gift?.name}</b>
+              <span className="gift-cost">
+                <CoinMark size={11} /> {coinLabel(pack.coins)}
+              </span>
+              <span>{moneyExact(pack.price)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="note pack-note">No card is charged yet. Buying adds the coins straight to your balance.</p>
 
       <div className="section">
         <h2>Earn</h2>

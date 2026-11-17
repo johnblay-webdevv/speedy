@@ -393,6 +393,15 @@ export async function changeCoins(delta, label, kind) {
   };
 }
 
+export async function buyCoins(coins) {
+  const { data, error } = await supabase.rpc("buy_coins", { p_coins: coins });
+  fail(error);
+  return {
+    coins: data.coins,
+    entry: { id: data.ledger_id, label: `Bought ${coins} coins`, delta: coins, at: Date.now() },
+  };
+}
+
 export async function sendGift(hostId, gift) {
   const { data, error } = await supabase.rpc("send_gift", {
     p_host: hostId,
@@ -559,23 +568,54 @@ export async function loadShareTargets() {
     const time = Date.parse(at) || 0;
     const current = ranked.get(id);
     if (!current) ranked.set(id, { id, at: time, kind });
-    else if (time > current.at) ranked.set(id, { id, at: time, kind: current.kind === "follow" ? "follow" : kind });
+    else if (kind === "follow" || time > current.at) {
+      ranked.set(id, { id, at: Math.max(current.at, time), kind: kind === "follow" ? "follow" : current.kind });
+    }
   };
 
-  const [followsRes, wroteRes, receivedRes, likesRes] = await Promise.all([
-    supabase.from("follows").select("following_id, created_at").eq("follower_id", me),
-    supabase.from("comments").select("created_at, clips(creator_id)").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
-    supabase.from("comments").select("user_id, created_at, clips!inner(creator_id)").eq("clips.creator_id", me).order("created_at", { ascending: false }).limit(40),
-    supabase.from("likes").select("created_at, clips(creator_id)").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
-  ]);
-  [followsRes, wroteRes, receivedRes, likesRes].forEach((result) => fail(result.error));
-
+  const followsRes = await supabase.from("follows").select("following_id, created_at").eq("follower_id", me);
+  fail(followsRes.error);
   (followsRes.data || []).forEach((row) => add(row.following_id, row.created_at, "follow"));
-  (wroteRes.data || []).forEach((row) => add(row.clips?.creator_id, row.created_at, "recent"));
-  (receivedRes.data || []).forEach((row) => add(row.user_id, row.created_at, "recent"));
-  (likesRes.data || []).forEach((row) => add(row.clips?.creator_id, row.created_at, "recent"));
 
-  return [...ranked.values()].sort((a, b) => b.at - a.at);
+  const [wroteRes, receivedRes, likesRes] = await Promise.all([
+    supabase.from("comments").select("created_at, clip_id").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
+    supabase.from("comments").select("user_id, created_at, clip_id").order("created_at", { ascending: false }).limit(80),
+    supabase.from("likes").select("created_at, clip_id").eq("user_id", me).order("created_at", { ascending: false }).limit(40),
+  ]);
+  const clipIds = [
+    ...(wroteRes.data || []).map((row) => row.clip_id),
+    ...(receivedRes.data || []).map((row) => row.clip_id),
+    ...(likesRes.data || []).map((row) => row.clip_id),
+  ].filter(Boolean);
+  const creators = {};
+  if (clipIds.length) {
+    const { data } = await supabase.from("clips").select("id, creator_id").in("id", [...new Set(clipIds)]);
+    (data || []).forEach((clip) => {
+      creators[clip.id] = clip.creator_id;
+    });
+  }
+  (wroteRes.data || []).forEach((row) => add(creators[row.clip_id], row.created_at, "recent"));
+  (likesRes.data || []).forEach((row) => add(creators[row.clip_id], row.created_at, "recent"));
+  (receivedRes.data || []).forEach((row) => {
+    if (creators[row.clip_id] === me) add(row.user_id, row.created_at, "recent");
+  });
+
+  const ids = [...ranked.keys()];
+  if (!ids.length) return [];
+  const { data: profiles, error } = await supabase.from("profiles").select("id, display_name, avatar_url").in("id", ids);
+  fail(error);
+  const byId = Object.fromEntries((profiles || []).map((row) => [row.id, row]));
+  return [...ranked.values()]
+    .filter((item) => byId[item.id])
+    .sort((a, b) => Number(b.kind === "follow") - Number(a.kind === "follow") || b.at - a.at)
+    .map((item) => ({
+      ...item,
+      profile: {
+        id: item.id,
+        name: byId[item.id].display_name || "Member",
+        avatar: byId[item.id].avatar_url || "",
+      },
+    }));
 }
 
 export async function shareClipWith(userId, clipId) {
