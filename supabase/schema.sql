@@ -491,19 +491,36 @@ begin
     raise exception 'Pick someone else';
   end if;
   if not (
-    (p_amount = 10 and p_name = 'Rose')
+    (p_amount = 5 and p_name = 'Candy')
+    or (p_amount = 10 and p_name = 'Rose')
+    or (p_amount = 20 and p_name = 'Butterfly')
     or (p_amount = 30 and p_name = 'Finger heart')
     or (p_amount = 60 and p_name = 'Ice cream')
+    or (p_amount = 100 and p_name = 'Teddy')
     or (p_amount = 139 and p_name = 'Doughnut')
     or (p_amount = 210 and p_name = 'Perfume')
+    or (p_amount = 250 and p_name = 'Cake')
     or (p_amount = 350 and p_name = 'Sunglasses')
     or (p_amount = 490 and p_name = 'Crown')
     or (p_amount = 630 and p_name = 'Sports car')
+    or (p_amount = 800 and p_name = 'Guitar')
+    or (p_amount = 1000 and p_name = 'Microphone')
+    or (p_amount = 1500 and p_name = 'Rocket')
+    or (p_amount = 2000 and p_name = 'Ring')
+    or (p_amount = 2500 and p_name = 'Trophy')
     or (p_amount = 3080 and p_name = 'Yacht')
+    or (p_amount = 4000 and p_name = 'Dragon')
+    or (p_amount = 4500 and p_name = 'Helicopter')
     or (p_amount = 5250 and p_name = 'Castle')
+    or (p_amount = 6000 and p_name = 'Phoenix')
     or (p_amount = 7000 and p_name = 'Lion')
+    or (p_amount = 8000 and p_name = 'Whale')
+    or (p_amount = 10000 and p_name = 'Planet')
     or (p_amount = 11900 and p_name = 'Universe')
+    or (p_amount = 15000 and p_name = 'Throne')
     or (p_amount = 17500 and p_name = 'Drama')
+    or (p_amount = 25000 and p_name = 'Galaxy')
+    or (p_amount = 35000 and p_name = 'Legend')
   ) then
     raise exception 'Unknown gift';
   end if;
@@ -999,7 +1016,7 @@ begin
   if v_user is null then
     raise exception 'Not signed in';
   end if;
-  if p_coins not in (10, 30, 60, 139, 210, 350, 490, 630, 3080, 5250, 7000, 11900, 17500) then
+  if p_coins not in (5, 10, 20, 30, 60, 100, 139, 210, 250, 350, 490, 630, 800, 1000, 1500, 2000, 2500, 3080, 4000, 4500, 5250, 6000, 7000, 8000, 10000, 11900, 15000, 17500, 25000, 35000) then
     raise exception 'Unknown coin pack';
   end if;
 
