@@ -1,11 +1,16 @@
+import { useState } from "react";
 import { COIN_PACKS, GIFTS, TASKS } from "./config";
 import { coinLabel, cx, moneyExact, timeAgo } from "./format";
 import { CoinMark } from "./icons";
 import { useStore } from "./store";
 import { Header } from "./ui";
 
+const MAIN_PACKS = new Set([10, 30, 60, 139, 210, 350, 490, 630, 3080, 5250, 7000, 11900, 17500]);
+
 export function Wallet() {
-  const { state, go, earn, pushToast, buyPack } = useStore();
+  const { state, go, openSheet, earn, pushToast } = useStore();
+  const [showAll, setShowAll] = useState(false);
+  const packs = showAll ? COIN_PACKS : COIN_PACKS.filter((pack) => MAIN_PACKS.has(pack.coins));
 
   const onTask = (task) => {
     if (state.earned[task.id]) return;
@@ -39,28 +44,31 @@ export function Wallet() {
             <span key={gift.id}>{gift.mark}</span>
           ))}
         </div>
-        <p>Spend coins as gifts, from a rose to a lion.</p>
+        <p>Buy a gift pack, then send it during a LIVE.</p>
       </section>
 
       <div className="section">
-        <h2>Gifts</h2>
+        <h2>Buy coins</h2>
       </div>
       <div className="pack-grid">
-        {COIN_PACKS.map((pack) => {
+        {packs.map((pack) => {
           const gift = GIFTS.find((item) => item.coins === pack.coins);
           return (
-            <button type="button" key={pack.coins} className="coin-pack" onClick={() => buyPack(pack.coins)}>
+            <button type="button" key={pack.coins} className="coin-pack" onClick={() => openSheet({ type: "buy-coins", coins: pack.coins })}>
               <span className="gift-avatar">{gift?.mark}</span>
               <b>{gift?.name}</b>
               <span className="gift-cost">
-                <CoinMark size={11} /> {coinLabel(pack.coins)}
+                <CoinMark size={12} /> {coinLabel(pack.coins)}
               </span>
-              <span>{moneyExact(pack.price)}</span>
+              <strong>{moneyExact(pack.price)}</strong>
             </button>
           );
         })}
       </div>
-      <p className="note pack-note">No card is charged yet. Buying adds the coins straight to your balance.</p>
+      <button type="button" className="text-link pack-more" onClick={() => setShowAll((value) => !value)}>
+        {showAll ? "Show fewer" : `See all ${COIN_PACKS.length} options`}
+      </button>
+      <p className="note pack-note">Tap a pack, check the price, then pay.</p>
 
       <div className="section">
         <h2>Earn</h2>

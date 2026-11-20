@@ -548,9 +548,10 @@ export function StoreProvider({ onSignOut, children }) {
     try {
       const result = await buyCoins(coins);
       dispatch({ type: "wallet-sync", coins: result.coins, entry: result.entry });
-      pushToast(`+${coins} coins`);
+      return true;
     } catch (error) {
       pushToast(error.message);
+      return false;
     }
   };
 

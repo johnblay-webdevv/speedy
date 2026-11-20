@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { loadShareTargets } from "./account";
-import { GIFTS, LISTING_CATEGORIES } from "./config";
+import { COIN_PACKS, GIFTS, LISTING_CATEGORIES } from "./config";
 import { coinLabel, compact, cx, money, moneyExact, plural, timeAgo } from "./format";
 import { BoltMark, CoinMark, Icon } from "./icons";
 import { useStore } from "./store";
@@ -38,6 +38,7 @@ export function Sheets() {
         {sheet.type === "cart" && <CartSheet />}
         {sheet.type === "checkout" && <CheckoutSheet />}
         {sheet.type === "gift" && <GiftSheet creatorId={sheet.creatorId} />}
+        {sheet.type === "buy-coins" && <BuyCoinsSheet coins={sheet.coins} />}
         {(sheet.type === "create" || sheet.type === "bolt") && <CreateSheet />}
         {sheet.type === "list" && <ListSheet />}
         {sheet.type === "post" && <PostSheet />}
@@ -644,33 +645,170 @@ function CheckoutSheet() {
   );
 }
 
-function GiftSheet({ creatorId }) {
-  const { state, sendGift, person, go } = useStore();
-  const creator = person(creatorId);
+function BuyCoinsSheet({ coins }) {
+  const { closeSheet } = useStore();
+  const pack = COIN_PACKS.find((item) => item.coins === coins);
+  const gift = GIFTS.find((item) => item.coins === coins);
+  const [step, setStep] = useState("review");
+  const [method, setMethod] = useState("card");
+  const [name, setName] = useState("");
+  const [card, setCard] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [cvc, setCvc] = useState("");
+  const [phone, setPhone] = useState("");
+
+  if (!pack || !gift) return null;
+
+  const digits = card.replace(/\D/g, "").slice(0, 16);
+  const cardLabel = digits.replace(/(\d{4})(?=\d)/g, "$1 ").trim();
+  const expiryOk = /^(0[1-9]|1[0-2])\/\d{2}$/.test(expiry);
+  const cardOk = digits.length === 16 && name.trim().length > 1 && expiryOk && cvc.replace(/\D/g, "").length >= 3;
+  const phoneOk = phone.replace(/\D/g, "").length >= 9;
+  const ready = method === "card" ? cardOk : phoneOk;
+  const methodName = method === "card" ? "Card" : "Mobile money";
+
   return (
     <>
       <div className="sheet-head">
-        <h2>Gift {creator?.name}</h2>
+        {step !== "review" && step !== "done" && (
+          <button type="button" className="icon-btn" aria-label="Back" onClick={() => setStep("review")}>
+            <Icon name="back" size={20} />
+          </button>
+        )}
+        <h2>{step === "blocked" ? "Not available" : step === "pay" ? "Pay" : "Buy coins"}</h2>
+      </div>
+      <div className="sheet-body buy-flow">
+        {step === "review" && (
+          <>
+            <div className="buy-summary">
+              <span className="gift-avatar lg">{gift.mark}</span>
+              <b>{gift.name}</b>
+              <span className="gift-cost">
+                <CoinMark size={14} /> {coinLabel(pack.coins)} coins
+              </span>
+            </div>
+            <div className="total-row strong">
+              <span>Total</span>
+              <b>{moneyExact(pack.price)}</b>
+            </div>
+            <button type="button" className="btn block" onClick={() => setStep("pay")}>
+              Continue to pay
+            </button>
+          </>
+        )}
+        {step === "pay" && (
+          <>
+            <div className="pay-methods">
+              <button type="button" className={method === "card" ? "on" : ""} onClick={() => setMethod("card")}>
+                Card
+              </button>
+              <button type="button" className={method === "momo" ? "on" : ""} onClick={() => setMethod("momo")}>
+                Mobile money
+              </button>
+            </div>
+            {method === "card" ? (
+              <div className="auth-form">
+                <label>
+                  Name on card
+                  <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="cc-name" placeholder="Jane Doe" />
+                </label>
+                <label>
+                  Card number
+                  <input
+                    inputMode="numeric"
+                    autoComplete="cc-number"
+                    placeholder="1234 5678 9012 3456"
+                    value={cardLabel}
+                    onChange={(event) => setCard(event.target.value)}
+                  />
+                </label>
+                <div className="pay-row">
+                  <label>
+                    Expiry
+                    <input
+                      inputMode="numeric"
+                      autoComplete="cc-exp"
+                      placeholder="MM/YY"
+                      value={expiry}
+                      onChange={(event) => {
+                        const raw = event.target.value.replace(/\D/g, "").slice(0, 4);
+                        setExpiry(raw.length > 2 ? `${raw.slice(0, 2)}/${raw.slice(2)}` : raw);
+                      }}
+                    />
+                  </label>
+                  <label>
+                    CVC
+                    <input
+                      inputMode="numeric"
+                      autoComplete="cc-csc"
+                      placeholder="123"
+                      value={cvc}
+                      onChange={(event) => setCvc(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <div className="auth-form">
+                <label>
+                  Mobile money number
+                  <input inputMode="tel" placeholder="024 000 0000" value={phone} onChange={(event) => setPhone(event.target.value)} />
+                </label>
+              </div>
+            )}
+            <button type="button" className="btn block" disabled={!ready} onClick={() => setStep("blocked")}>
+              Pay {moneyExact(pack.price)}
+            </button>
+          </>
+        )}
+        {step === "blocked" && (
+          <>
+            <div className="buy-summary">
+              <b>{methodName} is not available yet</b>
+              <span className="note">This payment did not go through, and no coins were added.</span>
+            </div>
+            <button type="button" className="btn block" onClick={closeSheet}>
+              Close
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function GiftSheet({ creatorId }) {
+  const { state, sendGift, person, go } = useStore();
+  const creator = person(creatorId);
+  const [showAll, setShowAll] = useState(false);
+  const affordable = GIFTS.filter((gift) => state.coins >= gift.coins);
+  const starter = GIFTS.filter((gift) => gift.coins <= 630);
+  const visible = showAll ? GIFTS : affordable.length ? affordable : starter;
+  return (
+    <>
+      <div className="sheet-head">
+        <h2>Send a gift</h2>
         <button type="button" className="coin-pill static" onClick={() => go("wallet")}>
           <CoinMark size={14} /> {coinLabel(state.coins)}
         </button>
       </div>
-      <div className="sheet-body gift-grid">
-        {GIFTS.map((gift) => (
-          <button type="button" key={gift.id} className="gift-card" onClick={() => sendGift(gift.id, creatorId)} disabled={state.coins < gift.coins}>
-            <span className="gift-avatar" aria-hidden="true">{gift.mark}</span>
-            <b>{gift.name}</b>
-            <span className="gift-cost">
-              <CoinMark size={12} /> {coinLabel(gift.coins)}
-            </span>
-          </button>
-        ))}
-      </div>
-      {GIFTS.some((gift) => state.coins < gift.coins) && (
-        <button type="button" className="text-link sheet-foot" onClick={() => go("wallet")}>
-          Get more coins
+      <div className="sheet-body">
+        <p className="note">{creator?.name ? `To ${creator.name}` : "Pick a gift"}</p>
+        <div className="gift-grid">
+          {visible.map((gift) => (
+            <button type="button" key={gift.id} className="gift-card" onClick={() => sendGift(gift.id, creatorId)} disabled={state.coins < gift.coins}>
+              <span className="gift-avatar" aria-hidden="true">{gift.mark}</span>
+              <b>{gift.name}</b>
+              <span className="gift-cost">
+                <CoinMark size={12} /> {coinLabel(gift.coins)}
+              </span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="text-link sheet-foot" onClick={() => (showAll ? go("wallet") : setShowAll(true))}>
+          {showAll ? "Get more coins" : "See every gift"}
         </button>
-      )}
+      </div>
     </>
   );
 }
